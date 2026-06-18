@@ -1,0 +1,68 @@
+name: Publish npm (reusable)
+
+# Reusable npm publish workflow for Provable-Games packages.
+#
+# Builds the package and publishes it to npm. Faithful to the standard
+# Provable-Games publish flow (bun install + typecheck + build + npm
+# publish); knobs are exposed as inputs so a package can tweak versions
+# or registry without forking the logic.
+#
+# Usage from a package repo (.github/workflows/publish.yml):
+#   name: Publish to npm
+#   on:
+#     release:
+#       types: [published]
+#     workflow_dispatch:
+#   jobs:
+#     publish:
+#       uses: Provable-Games/.github/.github/workflows/publish-npm.yml@v1
+#       secrets: inherit
+#
+# Requires the NPM_TOKEN secret (org- or repo-level). Only needs the
+# read-only default GITHUB_TOKEN, so the caller needs no permissions block.
+
+on:
+  workflow_call:
+    inputs:
+      bun_version:
+        type: string
+        default: "1.3.6"
+      node_version:
+        type: string
+        default: "22"
+      registry_url:
+        type: string
+        default: https://registry.npmjs.org
+      access:
+        description: npm access level (public | restricted).
+        type: string
+        default: public
+      run_typecheck:
+        description: Run `bun run typecheck` before publishing.
+        type: boolean
+        default: true
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun_version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          registry-url: ${{ inputs.registry_url }}
+      - run: bun install --frozen-lockfile
+      - if: ${{ inputs.run_typecheck }}
+        run: bun run typecheck
+      - run: bun run build
+      - run: npm publish --access ${{ inputs.access }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

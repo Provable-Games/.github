@@ -2,6 +2,34 @@
 
 Org defaults and **shared CI workflows** for Provable-Games repositories.
 
+> **Reusable workflows can't self-trigger.** Each caller repo keeps a thin
+> stub with the real `on:` trigger + a `uses:` line. To run a shared workflow
+> across all/new repos with no per-repo file, enforce it via an org
+> **Repository Ruleset** ("require workflows to pass before merging") instead.
+
+## Reusable npm publish
+
+[`.github/workflows/publish-npm.yml`](.github/workflows/publish-npm.yml) builds
+and publishes an npm package (bun install + typecheck + build + `npm publish`).
+
+Caller `.github/workflows/publish.yml`:
+
+```yaml
+name: Publish to npm
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+jobs:
+  publish:
+    uses: Provable-Games/.github/.github/workflows/publish-npm.yml@v1
+    secrets: inherit
+```
+
+Requires the `NPM_TOKEN` secret. Inputs (all optional): `bun_version`,
+`node_version`, `registry_url`, `access` (default `public`), `run_typecheck`.
+Only needs the read-only default token, so no caller `permissions` block.
+
 ## Reusable code review
 
 [`.github/workflows/code-review.yml`](.github/workflows/code-review.yml) runs
