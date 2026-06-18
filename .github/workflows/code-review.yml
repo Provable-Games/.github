@@ -1,0 +1,417 @@
+name: Code Review (reusable)
+
+# Reusable AI code-review workflow for Provable-Games repos.
+#
+# Callers supply only repo-specific data:
+#   - .github/review-agents.json  — agents: which diff paths to review, the
+#                                    prompt file, and a display name.
+#   - .github/prompts/*.md         — the review criteria each agent uses.
+# Everything generic (matrix build, prompt assembly, the codex sandbox
+# workaround, comment upserting, claude transcript extraction) lives here.
+# Model / effort / CLI version come from org Actions variables so a model
+# deprecation is a one-place change, not an edit in every repo.
+#
+# Usage from a caller repo (.github/workflows/pr-review.yml):
+#   jobs:
+#     review:
+#       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
+#       secrets: inherit
+#
+# Org variables (Settings → Secrets and variables → Actions → Variables):
+#   CODEX_REVIEW_MODEL   (default gpt-5.5)
+#   CODEX_REVIEW_EFFORT  (default xhigh)
+#   CODEX_CLI_VERSION    (default latest)
+#   CLAUDE_REVIEW_MODEL  (default claude-opus-4-8)
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: Path to the review-agents config in the caller repo.
+        type: string
+        default: .github/review-agents.json
+      enable_claude:
+        description: Run the Claude reviewer.
+        type: boolean
+        default: true
+      enable_codex:
+        description: Run the Codex reviewer.
+        type: boolean
+        default: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      CODEX_AUTH_DOT_JSON:
+        required: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-reviews: ${{ steps.set-matrix.outputs.has-reviews }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: set-matrix
+        env:
+          CONFIG_FILE: ${{ inputs.config_path }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "config file not found: $CONFIG_FILE" >&2
+            exit 1
+          fi
+          CHANGED_FILES_JSON=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+            | jq -R -s 'split("\n") | map(select(length > 0))')
+          MATRIX_JSON=$(jq -c --argjson changed_files "$CHANGED_FILES_JSON" '
+          {
+            include: [
+              .agents[]
+              | select([.diff_paths[] as $path | $changed_files[] | startswith($path)] | any)
+              | . + { diff_paths_str: (.diff_paths | join(" ")) }
+            ]
+          }' "$CONFIG_FILE")
+          HAS_REVIEWS=$(echo "$MATRIX_JSON" | jq -r 'if (.include | length) > 0 then "true" else "false" end')
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+          echo "has-reviews=$HAS_REVIEWS" >> "$GITHUB_OUTPUT"
+
+  claude-review:
+    needs: changes
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude
+    name: Claude - ${{ matrix.agent_name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build review prompt
+        id: build-prompt
+        env:
+          PROMPT_FILE: ${{ matrix.prompt_file }}
+          DIFF_PATHS_STR: ${{ matrix.diff_paths_str }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          AGENT_NAME: ${{ matrix.agent_name }}
+          COMMENT_HEADER: Claude Code Review
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR > /tmp/scoped-files.txt
+          {
+            cat "$PROMPT_FILE"
+            echo ""
+            echo "---"
+            echo ""
+            echo "This is PR #$PR_NUMBER for $REPOSITORY."
+            echo ""
+            echo "Targeted reviewer: $AGENT_NAME"
+            echo "Published comment title: $COMMENT_HEADER"
+            echo "Review scope: $DIFF_PATHS_STR"
+            echo ""
+            echo "Allowed file list (all findings must reference these files):"
+            sed 's/^/- /' /tmp/scoped-files.txt
+            echo ""
+            echo "Use this exact scoped diff command:"
+            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR"
+            echo ""
+            echo "Pull request title: $PR_TITLE"
+            echo "Pull request body:"
+            echo "$PR_BODY"
+            echo ""
+            echo "---"
+            echo ""
+            cat <<'EOF'
+          Hard scope rules:
+          - Every finding must cite a file from the allowed file list above.
+          - Do not inspect or mention files outside the allowed list.
+          - If no actionable findings exist in scoped files, say exactly: lgtm
+
+          Output requirements:
+          - Do not write a heading/title; the workflow will add the comment title.
+          - Keep findings strictly scoped to files in the allowed list.
+          - Keep the comment concise: list only actionable findings, ordered by severity.
+          - Do not include summaries, praise, or testing-gap notes unless tied to a specific finding.
+          - Limit the review to the highest-signal findings.
+          - Format each finding as:
+            [SEVERITY] file_path:line_number - description
+            Impact: what breaks and when
+            Fix: concrete code change
+          EOF
+          } > /tmp/prompt.txt
+
+          DELIM="PROMPT_EOF_$(date +%s)"
+          {
+            echo "prompt<<${DELIM}"
+            cat /tmp/prompt.txt
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ steps.build-prompt.outputs.prompt }}
+          model: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-opus-4-8' }}
+
+      - name: Extract Claude review output
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          OUTPUT_FILE=/tmp/review.txt
+          if [ -n "$EXECUTION_FILE" ] && [ -f "$EXECUTION_FILE" ] && [ -s "$EXECUTION_FILE" ]; then
+            jq -rs '
+              def gather_text:
+                if type == "string" then .
+                elif type == "array" then (map(gather_text) | join("\n"))
+                elif type == "object" then
+                  if has("text") and (.text | type == "string") then .text
+                  elif has("content") then (.content | gather_text)
+                  elif has("message") then (.message | gather_text)
+                  elif has("result") then (.result | gather_text)
+                  elif has("summary") then (.summary | gather_text)
+                  else "" end
+                else "" end;
+              [ .. | objects
+                | select((.role? == "assistant") or (.type? == "assistant") or (.type? == "message") or (.type? == "result"))
+                | gather_text ]
+              | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | last // empty
+            ' "$EXECUTION_FILE" > "$OUTPUT_FILE" || true
+          fi
+          if [ ! -s "$OUTPUT_FILE" ]; then
+            echo "No review output was captured from Claude." > "$OUTPUT_FILE"
+          fi
+
+      - name: Upsert review comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_HEADER: Claude Code Review
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- claude-review:${{ matrix.agent_id }} -->"
+          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
+        run: |
+          REVIEW_BODY_FILE=/tmp/review-body.txt
+          if [ -s /tmp/review.txt ] && [ "$(head -n 1 /tmp/review.txt)" = "## $COMMENT_HEADER" ]; then
+            sed '1d;/./,$!d' /tmp/review.txt > "$REVIEW_BODY_FILE"
+          else
+            cp /tmp/review.txt "$REVIEW_BODY_FILE"
+          fi
+          {
+            echo "## $COMMENT_HEADER"
+            echo ""
+            if [ "$REVIEW_OUTCOME" != "success" ]; then
+              echo "**Review execution failed**."
+              echo ""
+            fi
+            cat "$REVIEW_BODY_FILE"
+            echo ""
+            echo "$MARKER"
+          } > /tmp/review-formatted.txt
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > /tmp/pr-comments.json
+          COMMENT_ID=$(jq -r --arg marker "$MARKER" '
+            [.[] | select(.user.login == "github-actions[bot]") | select(.body | contains($marker)) | .id] | first // empty
+          ' /tmp/pr-comments.json)
+          if [ -n "$COMMENT_ID" ]; then
+            jq -n --rawfile body /tmp/review-formatted.txt '{body:$body}' > /tmp/comment-payload.json
+            gh api --method PATCH "repos/$REPO/issues/comments/$COMMENT_ID" --input /tmp/comment-payload.json > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/review-formatted.txt > /dev/null
+          fi
+
+  codex-review:
+    needs: changes
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex
+    name: Codex - ${{ matrix.agent_name }}
+    runs-on: ubuntu-latest
+    env:
+      CODEX_NPM_SPEC: "@openai/codex@${{ vars.CODEX_CLI_VERSION || 'latest' }}"
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Enable Codex sandbox prerequisites
+        run: |
+          # Codex's bundled bubblewrap needs unprivileged user namespaces;
+          # Ubuntu 24.04 runners block them via AppArmor. Same workaround as
+          # openai/codex-action uses on GitHub-hosted runners.
+          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Verify Codex sandbox
+        run: |
+          # codex exec exits 0 even when its sandbox is broken, so prove the
+          # sandbox can run a command before spending a review on it.
+          npx -y "$CODEX_NPM_SPEC" sandbox -c 'sandbox_mode="read-only"' -- true
+
+      - name: Inject OAuth Session
+        env:
+          CODEX_AUTH_DOT_JSON: ${{ secrets.CODEX_AUTH_DOT_JSON }}
+        run: |
+          mkdir -p ~/.codex
+          printf '%s' "$CODEX_AUTH_DOT_JSON" > ~/.codex/auth.json
+          chmod 600 ~/.codex/auth.json
+
+      - name: Build review prompt
+        env:
+          PROMPT_FILE: ${{ matrix.prompt_file }}
+          DIFF_PATHS_STR: ${{ matrix.diff_paths_str }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          AGENT_NAME: ${{ matrix.agent_name }}
+          COMMENT_HEADER: GPT Code Review
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR > /tmp/scoped-files.txt
+          {
+            cat "$PROMPT_FILE"
+            echo ""
+            echo "---"
+            echo ""
+            echo "This is PR #$PR_NUMBER for $REPOSITORY."
+            echo ""
+            echo "Targeted reviewer: $AGENT_NAME"
+            echo "Published comment title: $COMMENT_HEADER"
+            echo "Review scope: $DIFF_PATHS_STR"
+            echo ""
+            echo "Allowed file list (all findings must reference these files):"
+            sed 's/^/- /' /tmp/scoped-files.txt
+            echo ""
+            echo "Use this exact scoped diff command:"
+            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR"
+            echo ""
+            echo "Pull request title: $PR_TITLE"
+            echo "Pull request body:"
+            echo "$PR_BODY"
+            echo ""
+            echo "---"
+            echo ""
+            cat <<'EOF'
+          Output requirements:
+          - Do not write a heading/title; the workflow will add the comment title.
+          - If no actionable findings exist, output exactly: lgtm
+          - Otherwise, keep the comment concise: list only actionable findings, ordered by severity.
+          - Do not include summaries, praise, or testing-gap notes unless tied to a specific finding.
+          - Limit the review to the highest-signal findings.
+
+          Format each finding as:
+          [SEVERITY] file_path:line_number - description
+          Impact: what breaks and when
+          Fix: concrete code change
+
+          Where SEVERITY is one of: CRITICAL, HIGH, MEDIUM, LOW, INFO
+          EOF
+          } > /tmp/prompt.txt
+
+      - name: Run Codex review
+        id: codex-review
+        run: |
+          set +e
+          npx -y "$CODEX_NPM_SPEC" exec \
+            --sandbox read-only \
+            -c "model=\"${{ vars.CODEX_REVIEW_MODEL || 'gpt-5.5' }}\"" \
+            -c "model_reasoning_effort=\"${{ vars.CODEX_REVIEW_EFFORT || 'xhigh' }}\"" \
+            -o /tmp/review.txt \
+            -- "$(cat /tmp/prompt.txt)" > /tmp/review-run.log 2>&1
+          EXIT_CODE=$?
+          set -e
+          if [ -s /tmp/review.txt ]; then cat /tmp/review.txt; fi
+          if [ -s /tmp/review-run.log ]; then
+            echo ""
+            echo "---- codex-cli log (truncated) ----"
+            sed -n '1,200p' /tmp/review-run.log
+          fi
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Upsert review comment
+        if: always() && steps.codex-review.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_HEADER: GPT Code Review
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- codex-review:${{ matrix.agent_id }} -->"
+          EXIT_CODE: ${{ steps.codex-review.outputs.exit_code }}
+        run: |
+          REVIEW_BODY_FILE=/tmp/review-body.txt
+          if [ -s /tmp/review.txt ] && [ "$(head -n 1 /tmp/review.txt)" = "## $COMMENT_HEADER" ]; then
+            sed '1d;/./,$!d' /tmp/review.txt > "$REVIEW_BODY_FILE"
+          elif [ -s /tmp/review.txt ]; then
+            cp /tmp/review.txt "$REVIEW_BODY_FILE"
+          else
+            : > "$REVIEW_BODY_FILE"
+          fi
+          {
+            echo "## $COMMENT_HEADER"
+            echo ""
+            if [ "$EXIT_CODE" != "0" ]; then
+              echo "**Review execution failed** (exit code $EXIT_CODE)."
+              echo ""
+              if [ -s /tmp/review-run.log ]; then
+                echo '```text'
+                sed -n '1,160p' /tmp/review-run.log
+                echo '```'
+              fi
+            elif [ -s "$REVIEW_BODY_FILE" ]; then
+              cat "$REVIEW_BODY_FILE"
+            else
+              echo "No review output was produced."
+            fi
+            echo ""
+            echo "$MARKER"
+          } > /tmp/review-formatted.txt
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > /tmp/pr-comments.json
+          COMMENT_ID=$(jq -r --arg marker "$MARKER" '
+            [.[] | select(.user.login == "github-actions[bot]") | select(.body | contains($marker)) | .id] | first // empty
+          ' /tmp/pr-comments.json)
+          if [ -n "$COMMENT_ID" ]; then
+            jq -n --rawfile body /tmp/review-formatted.txt '{body:$body}' > /tmp/comment-payload.json
+            gh api --method PATCH "repos/$REPO/issues/comments/$COMMENT_ID" --input /tmp/comment-payload.json > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/review-formatted.txt > /dev/null
+          fi
+
+      - name: Fail on Codex runtime error
+        if: steps.codex-review.outputs.exit_code != '0'
+        run: exit 1
