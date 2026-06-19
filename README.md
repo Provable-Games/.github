@@ -74,6 +74,20 @@ review config and prompts.
    An agent runs only when the PR touches one of its `diff_paths`. Add more
    agents for different areas (each gets its own scoped prompt + PR comment).
 
+   Optional **`exclude_paths`** narrows an agent to "matched by `diff_paths`
+   but not under these paths" — useful for a catch-all `general` agent that
+   reviews everything *except* the app dirs:
+
+   ```json
+   {
+     "agent_id": "general",
+     "agent_name": "General Reviewer",
+     "prompt_file": ".github/prompts/general.md",
+     "diff_paths": ["."],
+     "exclude_paths": ["contracts/", "client/", "indexer/", "api/"]
+   }
+   ```
+
 3. Add the prompt file(s) referenced above (`.github/prompts/sdk-review.md`),
    containing the review criteria for that scope.
 
@@ -81,6 +95,9 @@ review config and prompts.
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — for the Claude reviewer.
 - `CODEX_AUTH_DOT_JSON` — `~/.codex/auth.json` contents for the Codex reviewer.
+
+A reviewer is **skipped cleanly** (no failing/empty checks) on fork PRs
+(secrets aren't available to forks) and when its secret is absent.
 
 ### Variables (org-level, optional — sensible defaults baked in)
 

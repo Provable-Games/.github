@@ -53,10 +53,39 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has-reviews: ${{ steps.set-matrix.outputs.has-reviews }}
+      can-claude: ${{ steps.gate.outputs.can-claude }}
+      can-codex: ${{ steps.gate.outputs.can-codex }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # Skip cleanly on forks (secrets aren't available to fork PRs) and when
+      # a reviewer's secret is absent — avoids noisy failing/empty reviews.
+      - id: gate
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          HAS_CODEX: ${{ secrets.CODEX_AUTH_DOT_JSON != '' }}
+        run: |
+          CAN_CLAUDE=true
+          CAN_CODEX=true
+          if [ "$IS_FORK" = "true" ]; then
+            CAN_CLAUDE=false
+            CAN_CODEX=false
+            echo "Fork PR — AI reviews skipped (secrets unavailable to forks)."
+          fi
+          if [ "$HAS_CLAUDE" != "true" ]; then
+            CAN_CLAUDE=false
+            echo "CLAUDE_CODE_OAUTH_TOKEN not set — Claude review skipped."
+          fi
+          if [ "$HAS_CODEX" != "true" ]; then
+            CAN_CODEX=false
+            echo "CODEX_AUTH_DOT_JSON not set — Codex review skipped."
+          fi
+          echo "can-claude=$CAN_CLAUDE" >> "$GITHUB_OUTPUT"
+          echo "can-codex=$CAN_CODEX" >> "$GITHUB_OUTPUT"
+
       - id: set-matrix
         env:
           CONFIG_FILE: ${{ inputs.config_path }}
@@ -69,12 +98,26 @@ jobs:
           fi
           CHANGED_FILES_JSON=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
             | jq -R -s 'split("\n") | map(select(length > 0))')
+          # An agent matches when a changed file is included by diff_paths AND
+          # not covered by its optional exclude_paths (so "general" can be
+          # everything-except-app-dirs). Agents without exclude_paths behave
+          # exactly as before.
           MATRIX_JSON=$(jq -c --argjson changed_files "$CHANGED_FILES_JSON" '
           {
             include: [
               .agents[]
-              | select([.diff_paths[] as $path | $changed_files[] | startswith($path)] | any)
-              | . + { diff_paths_str: (.diff_paths | join(" ")) }
+              | . as $a
+              | select(
+                  [ $changed_files[]
+                    | . as $f
+                    | (($a.diff_paths // []) | any(. as $p | $f | startswith($p)))
+                      and (($a.exclude_paths // []) | any(. as $p | $f | startswith($p)) | not)
+                  ] | any
+                )
+              | . + {
+                  diff_paths_str: (.diff_paths | join(" ")),
+                  exclude_paths_str: ((.exclude_paths // []) | map(":!" + .) | join(" "))
+                }
             ]
           }' "$CONFIG_FILE")
           HAS_REVIEWS=$(echo "$MATRIX_JSON" | jq -r 'if (.include | length) > 0 then "true" else "false" end')
@@ -83,7 +126,7 @@ jobs:
 
   claude-review:
     needs: changes
-    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && needs.changes.outputs.can-claude == 'true'
     name: Claude - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     permissions:
@@ -104,6 +147,7 @@ jobs:
         env:
           PROMPT_FILE: ${{ matrix.prompt_file }}
           DIFF_PATHS_STR: ${{ matrix.diff_paths_str }}
+          EXCLUDE_PATHS_STR: ${{ matrix.exclude_paths_str }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -113,7 +157,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR > /tmp/scoped-files.txt
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR $EXCLUDE_PATHS_STR > /tmp/scoped-files.txt
           {
             cat "$PROMPT_FILE"
             echo ""
@@ -129,7 +173,7 @@ jobs:
             sed 's/^/- /' /tmp/scoped-files.txt
             echo ""
             echo "Use this exact scoped diff command:"
-            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR"
+            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR $EXCLUDE_PATHS_STR"
             echo ""
             echo "Pull request title: $PR_TITLE"
             echo "Pull request body:"
@@ -240,7 +284,7 @@ jobs:
 
   codex-review:
     needs: changes
-    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && needs.changes.outputs.can-codex == 'true'
     name: Codex - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     env:
@@ -294,6 +338,7 @@ jobs:
         env:
           PROMPT_FILE: ${{ matrix.prompt_file }}
           DIFF_PATHS_STR: ${{ matrix.diff_paths_str }}
+          EXCLUDE_PATHS_STR: ${{ matrix.exclude_paths_str }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -303,7 +348,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR > /tmp/scoped-files.txt
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" -- $DIFF_PATHS_STR $EXCLUDE_PATHS_STR > /tmp/scoped-files.txt
           {
             cat "$PROMPT_FILE"
             echo ""
@@ -319,7 +364,7 @@ jobs:
             sed 's/^/- /' /tmp/scoped-files.txt
             echo ""
             echo "Use this exact scoped diff command:"
-            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR"
+            echo "  git diff $BASE_SHA...$HEAD_SHA -- $DIFF_PATHS_STR $EXCLUDE_PATHS_STR"
             echo ""
             echo "Pull request title: $PR_TITLE"
             echo "Pull request body:"
