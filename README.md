@@ -96,8 +96,9 @@ review config and prompts.
 - `CLAUDE_CODE_OAUTH_TOKEN` — for the Claude reviewer.
 - `CODEX_AUTH_DOT_JSON` — `~/.codex/auth.json` contents for the Codex reviewer.
 
-A reviewer is **skipped cleanly** (no failing/empty checks) on fork PRs
-(secrets aren't available to forks) and when its secret is absent.
+Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
+review would just fail/post empty). Same-repo and same-org branch PRs run
+normally.
 
 ### Variables (org-level, optional — sensible defaults baked in)
 

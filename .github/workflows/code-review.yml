@@ -53,38 +53,10 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has-reviews: ${{ steps.set-matrix.outputs.has-reviews }}
-      can-claude: ${{ steps.gate.outputs.can-claude }}
-      can-codex: ${{ steps.gate.outputs.can-codex }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      # Skip cleanly on forks (secrets aren't available to fork PRs) and when
-      # a reviewer's secret is absent — avoids noisy failing/empty reviews.
-      - id: gate
-        env:
-          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
-          HAS_CLAUDE: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-          HAS_CODEX: ${{ secrets.CODEX_AUTH_DOT_JSON != '' }}
-        run: |
-          CAN_CLAUDE=true
-          CAN_CODEX=true
-          if [ "$IS_FORK" = "true" ]; then
-            CAN_CLAUDE=false
-            CAN_CODEX=false
-            echo "Fork PR — AI reviews skipped (secrets unavailable to forks)."
-          fi
-          if [ "$HAS_CLAUDE" != "true" ]; then
-            CAN_CLAUDE=false
-            echo "CLAUDE_CODE_OAUTH_TOKEN not set — Claude review skipped."
-          fi
-          if [ "$HAS_CODEX" != "true" ]; then
-            CAN_CODEX=false
-            echo "CODEX_AUTH_DOT_JSON not set — Codex review skipped."
-          fi
-          echo "can-claude=$CAN_CLAUDE" >> "$GITHUB_OUTPUT"
-          echo "can-codex=$CAN_CODEX" >> "$GITHUB_OUTPUT"
 
       - id: set-matrix
         env:
@@ -126,7 +98,9 @@ jobs:
 
   claude-review:
     needs: changes
-    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && needs.changes.outputs.can-claude == 'true'
+    # Skip on forks — secrets aren't available to fork PRs, so a review would
+    # just fail/post empty. (Same-repo PRs and same-org branches run normally.)
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && github.event.pull_request.head.repo.fork == false
     name: Claude - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     permissions:
@@ -284,7 +258,8 @@ jobs:
 
   codex-review:
     needs: changes
-    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && needs.changes.outputs.can-codex == 'true'
+    # Skip on forks — secrets aren't available to fork PRs.
+    if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && github.event.pull_request.head.repo.fork == false
     name: Codex - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     env:
