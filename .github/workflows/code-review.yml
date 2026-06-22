@@ -379,8 +379,8 @@ jobs:
           if [ -s /tmp/review.txt ]; then cat /tmp/review.txt; fi
           if [ -s /tmp/review-run.log ]; then
             echo ""
-            echo "---- codex-cli log (truncated) ----"
-            sed -n '1,200p' /tmp/review-run.log
+            echo "Codex CLI log captured at /tmp/review-run.log."
+            echo "Not printing the log because it can contain the review prompt."
           fi
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
@@ -393,6 +393,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MARKER: "<!-- codex-review:${{ matrix.agent_id }} -->"
           EXIT_CODE: ${{ steps.codex-review.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           REVIEW_BODY_FILE=/tmp/review-body.txt
           if [ -s /tmp/review.txt ] && [ "$(head -n 1 /tmp/review.txt)" = "## $COMMENT_HEADER" ]; then
@@ -408,11 +409,8 @@ jobs:
             if [ "$EXIT_CODE" != "0" ]; then
               echo "**Review execution failed** (exit code $EXIT_CODE)."
               echo ""
-              if [ -s /tmp/review-run.log ]; then
-                echo '```text'
-                sed -n '1,160p' /tmp/review-run.log
-                echo '```'
-              fi
+              echo "The Codex CLI log was not posted because it can contain the full review prompt."
+              echo "See the workflow run for job status: $RUN_URL"
             elif [ -s "$REVIEW_BODY_FILE" ]; then
               cat "$REVIEW_BODY_FILE"
             else
