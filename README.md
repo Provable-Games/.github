@@ -74,6 +74,12 @@ review config and prompts.
    An agent runs only when the PR touches one of its `diff_paths`. Add more
    agents for different areas (each gets its own scoped prompt + PR comment).
 
+   `diff_paths` and `exclude_paths` are matched as **literal path prefixes,
+   not globs**: `"packages/"` matches `packages/foo/bar.cairo`, and
+   `"package.json"` matches only that file. Do not write `"src/**"` — `**` is
+   not special here, so the entry would match nothing. Use `"."` (or `""`) for
+   a repo-root catch-all that matches every changed file.
+
    Optional **`exclude_paths`** narrows an agent to "matched by `diff_paths`
    but not under these paths" — useful for a catch-all `general` agent that
    reviews everything *except* the app dirs:

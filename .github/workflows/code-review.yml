@@ -74,20 +74,31 @@ jobs:
           # not covered by its optional exclude_paths (so "general" can be
           # everything-except-app-dirs). Agents without exclude_paths behave
           # exactly as before.
+          #
+          # diff_paths / exclude_paths are matched as literal path PREFIXES, not
+          # globs — "packages/" matches "packages/foo/bar.cairo". A repo-root
+          # catch-all ("." or "./" or "") normalizes to the empty prefix, which
+          # every path starts with; without that, "." would only match dotfiles
+          # and a catch-all agent would silently skip README.md-only PRs.
           MATRIX_JSON=$(jq -c --argjson changed_files "$CHANGED_FILES_JSON" '
+          def norm_prefix: if . == "." or . == "./" or . == "" then "" else . end;
           {
             include: [
               .agents[]
               | . as $a
+              | (($a.diff_paths // []) | map(norm_prefix)) as $include_prefixes
+              | (($a.exclude_paths // []) | map(norm_prefix)) as $exclude_prefixes
               | select(
                   [ $changed_files[]
                     | . as $f
-                    | (($a.diff_paths // []) | any(. as $p | $f | startswith($p)))
-                      and (($a.exclude_paths // []) | any(. as $p | $f | startswith($p)) | not)
+                    | ($include_prefixes | any(. as $p | $f | startswith($p)))
+                      and ($exclude_prefixes | any(. as $p | $f | startswith($p)) | not)
                   ] | any
                 )
               | . + {
-                  diff_paths_str: (.diff_paths | join(" ")),
+                  # "" is a valid prefix but not a valid git pathspec; "." is
+                  # both, and means the same thing to git.
+                  diff_paths_str: (.diff_paths | map(if . == "" then "." else . end) | join(" ")),
                   exclude_paths_str: ((.exclude_paths // []) | map(":!" + .) | join(" "))
                 }
             ]
