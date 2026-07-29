@@ -38,6 +38,13 @@ on:
         description: Run the Codex reviewer.
         type: boolean
         default: true
+      block_on_severity:
+        description: >-
+          Fail the review job when a reviewer reports a [CRITICAL] or [HIGH]
+          finding, turning review into a merge gate. Off by default: reviews
+          are advisory unless a repo opts in.
+        type: boolean
+        default: false
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
@@ -267,6 +274,21 @@ jobs:
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/review-formatted.txt > /dev/null
           fi
 
+      # Opt-in merge gate. The review comment is upserted by the step above
+      # regardless, so a blocking finding still gets posted before the job
+      # goes red. Runs on always() so it also fires when an earlier step
+      # failed — a review that produced no output cannot match, so it will
+      # not block.
+      - name: Fail on blocking findings
+        if: always() && inputs.block_on_severity
+        run: |
+          if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
+            echo "::error::Review reported CRITICAL or HIGH severity findings"
+            grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          echo "No blocking findings"
+
   codex-review:
     needs: changes
     # Skip on forks — secrets aren't available to fork PRs.
@@ -454,3 +476,18 @@ jobs:
       - name: Fail on Codex runtime error
         if: steps.codex-review.outputs.exit_code != '0'
         run: exit 1
+
+      # Opt-in merge gate. The review comment is upserted by the step above
+      # regardless, so a blocking finding still gets posted before the job
+      # goes red. Runs on always() so it also fires when an earlier step
+      # failed — a review that produced no output cannot match, so it will
+      # not block.
+      - name: Fail on blocking findings
+        if: always() && inputs.block_on_severity
+        run: |
+          if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
+            echo "::error::Review reported CRITICAL or HIGH severity findings"
+            grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          echo "No blocking findings"
