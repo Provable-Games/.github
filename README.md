@@ -54,7 +54,25 @@ review config and prompts.
    ```
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
-   `enable_claude` / `enable_codex` (default `true`).
+   `enable_claude` / `enable_codex` (default `true`), and
+   `block_on_severity` (default `false`).
+
+   **`block_on_severity`** turns review into a merge gate: the review job
+   fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
+   default — reviews are advisory unless a repo opts in:
+
+   ```yaml
+   jobs:
+     review:
+       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
+       with:
+         block_on_severity: true
+       secrets: inherit
+   ```
+
+   The review comment is posted either way, so a blocking finding is always
+   visible before the job goes red. A review that errored or produced no
+   output cannot match, so it never blocks on its own.
 
 2. Add `.github/review-agents.json` describing what to review:
 
