@@ -35,7 +35,7 @@ Only needs the read-only default token, so no caller `permissions` block.
 [`.github/workflows/code-review.yml`](.github/workflows/code-review.yml) runs
 matrixed Claude + Codex reviews on pull requests. All generic logic lives here
 (matrix build, prompt assembly, the codex sandbox workaround, comment
-upserting, claude transcript extraction). Each repo supplies only its own
+publishing, claude transcript extraction). Each repo supplies only its own
 review config and prompts.
 
 ### Adopt it in a repo
@@ -91,6 +91,8 @@ review config and prompts.
 
    An agent runs only when the PR touches one of its `diff_paths`. Add more
    agents for different areas (each gets its own scoped prompt + PR comment).
+   Every completed reviewer run posts a new comment, titled
+   `{model}-{effort} Code Review: [<short SHA>](<reviewed commit URL>)`.
 
    `diff_paths` and `exclude_paths` are matched as **literal path prefixes,
    not globs**: `"packages/"` matches `packages/foo/bar.cairo`, and
@@ -124,17 +126,26 @@ Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
 review would just fail/post empty). Same-repo and same-org branch PRs run
 normally.
 
-### Variables (org-level, optional — sensible defaults baked in)
+### Reviewer models and effort
+
+The shared workflow pins these settings so organization and repository Actions
+variables cannot change the requested reviewer model or effort:
+
+| Reviewer | Model | Effort | CLI |
+|---|---|---|---|
+| Claude | `claude-opus-5-5` | `medium` | `@anthropic-ai/claude-code@2.1.281` |
+| Codex | `gpt-6-luna` | `max` | `@openai/codex@0.155.0` |
+
+Claude CLI 2.1.281 supports Opus 5.5; the reusable workflow passes this pinned
+binary to the Claude Code Action.
+
+### Optional Actions variables
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAUDE_REVIEW_MODEL` | `claude-opus-4-8` | Claude review model |
-| `CODEX_REVIEW_MODEL` | `gpt-5.5` | Codex review model |
-| `CODEX_REVIEW_EFFORT` | `xhigh` | Codex reasoning effort |
-| `CODEX_CLI_VERSION` | `latest` | `@openai/codex` npm spec |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | unset | Optional timeout for each Codex review |
 
-A model deprecation is a one-place change here (org variable), not an edit in
-every repo.
+Model and effort changes are made in this shared workflow and its documentation.
 
 ### Versioning
 
