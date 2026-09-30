@@ -135,6 +135,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate organization review settings
+        run: |
+          if [[ ! "$CLAUDE_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
+             [[ ! "$CLAUDE_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+            echo "::error::Configure CLAUDE review model, effort as Actions variables accessible to this repository."
+            exit 1
+          fi
+          echo "Review configuration: provider=claude model=$CLAUDE_REVIEW_MODEL effort=$CLAUDE_REVIEW_EFFORT"
+
       - name: Build review prompt
         id: build-prompt
         env:
@@ -314,12 +323,13 @@ jobs:
 
       - name: Validate organization review settings
         run: |
-          if [[ ! "$CLAUDE_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
-             [[ ! "$CLAUDE_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
-            echo "::error::Configure CLAUDE review model, effort as Actions variables accessible to this repository."
+          if [[ ! "$CODEX_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
+             [[ ! "$CODEX_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] ||
+             [[ ! "$CODEX_CLI_VERSION" =~ ^(latest|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Configure CODEX review model, effort, and CLI version as Actions variables accessible to this repository."
             exit 1
           fi
-          echo "Review configuration: provider=claude model=$CLAUDE_REVIEW_MODEL effort=$CLAUDE_REVIEW_EFFORT"
+          echo "Review configuration: provider=codex model=$CODEX_REVIEW_MODEL effort=$CODEX_REVIEW_EFFORT"
 
       - name: Enable Codex sandbox prerequisites
         run: |
@@ -348,16 +358,6 @@ jobs:
           mkdir -p ~/.codex
           printf '%s' "$CODEX_AUTH_DOT_JSON" > ~/.codex/auth.json
           chmod 600 ~/.codex/auth.json
-
-      - name: Validate organization review settings
-        run: |
-          if [[ ! "$CODEX_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
-             [[ ! "$CODEX_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] ||
-             [[ ! "$CODEX_CLI_VERSION" =~ ^(latest|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "::error::Configure CODEX review model, effort, and CLI version as Actions variables accessible to this repository."
-            exit 1
-          fi
-          echo "Review configuration: provider=codex model=$CODEX_REVIEW_MODEL effort=$CODEX_REVIEW_EFFORT"
 
       - name: Build review prompt
         env:
