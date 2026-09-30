@@ -8,9 +8,9 @@ name: Code Review (reusable)
 #   - .github/prompts/*.md         — the review criteria each agent uses.
 # Everything generic (matrix build, prompt assembly, the codex sandbox
 # workaround, comment publishing, claude transcript extraction) lives here.
-# Reviewer settings are pinned here so org/repo variables cannot override them:
-#   Claude: claude-opus-5-5, medium (Claude Code CLI 2.1.281)
-#   Codex:  gpt-6-luna, max (@openai/codex 0.155.0)
+# Reviewer model/effort come from organization Actions variables.
+# CODEX_CLI_VERSION selects an exact npm version or latest; Claude action v1
+# installs its maintained CLI. Missing configuration fails before execution.
 #
 # Usage from a caller repo (.github/workflows/pr-review.yml):
 #   jobs:
@@ -51,7 +51,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       pull-requests: read
@@ -118,10 +118,10 @@ jobs:
     # just fail/post empty. (Same-repo PRs and same-org branches run normally.)
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && github.event.pull_request.head.repo.fork == false
     name: Claude - ${{ matrix.agent_name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     env:
-      CLAUDE_REVIEW_MODEL: claude-opus-5-5
-      CLAUDE_REVIEW_EFFORT: medium
+      CLAUDE_REVIEW_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL }}
+      CLAUDE_REVIEW_EFFORT: ${{ vars.CLAUDE_REVIEW_EFFORT }}
     permissions:
       contents: read
       issues: write
@@ -134,6 +134,15 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Validate organization review settings
+        run: |
+          if [[ ! "$CLAUDE_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
+             [[ ! "$CLAUDE_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+            echo "::error::Configure CLAUDE review model, effort as Actions variables accessible to this repository."
+            exit 1
+          fi
+          echo "Review configuration: provider=claude model=$CLAUDE_REVIEW_MODEL effort=$CLAUDE_REVIEW_EFFORT"
 
       - name: Build review prompt
         id: build-prompt
@@ -202,25 +211,13 @@ jobs:
             echo "${DELIM}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Set up Claude Code CLI
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install Claude Code CLI
-        id: claude-cli
-        run: |
-          npm install --global @anthropic-ai/claude-code@2.1.281
-          echo "path=$(command -v claude)" >> "$GITHUB_OUTPUT"
-
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1.0.231
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.build-prompt.outputs.prompt }}
           claude_args: --model ${{ env.CLAUDE_REVIEW_MODEL }} --effort ${{ env.CLAUDE_REVIEW_EFFORT }}
-          path_to_claude_code_executable: ${{ steps.claude-cli.outputs.path }}
 
       - name: Extract Claude review output
         if: always()
@@ -301,11 +298,12 @@ jobs:
     # Skip on forks — secrets aren't available to fork PRs.
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && github.event.pull_request.head.repo.fork == false
     name: Codex - ${{ matrix.agent_name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     env:
-      CODEX_REVIEW_MODEL: gpt-6-luna
-      CODEX_REVIEW_EFFORT: max
-      CODEX_NPM_SPEC: "@openai/codex@0.155.0"
+      CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+      CODEX_REVIEW_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT }}
+      CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION }}
+      CODEX_NPM_SPEC: "@openai/codex@${{ vars.CODEX_CLI_VERSION }}"
     permissions:
       contents: read
       issues: write
@@ -322,6 +320,16 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+
+      - name: Validate organization review settings
+        run: |
+          if [[ ! "$CODEX_REVIEW_MODEL" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] ||
+             [[ ! "$CODEX_REVIEW_EFFORT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] ||
+             [[ ! "$CODEX_CLI_VERSION" =~ ^(latest|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Configure CODEX review model, effort, and CLI version as Actions variables accessible to this repository."
+            exit 1
+          fi
+          echo "Review configuration: provider=codex model=$CODEX_REVIEW_MODEL effort=$CODEX_REVIEW_EFFORT"
 
       - name: Enable Codex sandbox prerequisites
         run: |
