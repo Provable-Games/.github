@@ -50,8 +50,19 @@ review config and prompts.
    jobs:
      review:
        uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
-       secrets: inherit
+       # A called workflow's job permissions can't exceed the caller's.
+       permissions:
+         contents: read
+         issues: write
+         pull-requests: write
+         id-token: write
+       secrets:
+         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+         CODEX_AUTH_DOT_JSON: ${{ secrets.CODEX_AUTH_DOT_JSON }}
    ```
+
+   `id-token: write` lets the workflow find its own revision, so it fetches the
+   review instructions from that same commit.
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
    `enable_claude` / `enable_codex` (default `true`),
@@ -142,7 +153,9 @@ finding is:
 `Do` says whether to fix it in this PR or in a follow-up issue or PR. A review
 that cannot run because review material is missing replies
 `Review incomplete: <reason>`. The full contract, with the severity,
-likelihood, effort and `Do` definitions, is in `code-review.yml`.
+likelihood, effort and `Do` definitions, is
+[`.github/prompts/review-instructions.md`](.github/prompts/review-instructions.md),
+which both reviewers get after the repository prompt.
 
 ### Secrets (org-level, inherited)
 
