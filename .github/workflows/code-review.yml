@@ -79,6 +79,8 @@ jobs:
       # self-test), so the review jobs fetch review-instructions.md from the same revision.
       - name: Resolve shared workflow revision
         id: self
+        # Fork PRs get no id-token and skip the reviews, so the run stays green.
+        if: github.event.pull_request.head.repo.fork == false
         run: |
           if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
             echo "::error::Grant the review job id-token: write in the caller workflow (see the README)."
