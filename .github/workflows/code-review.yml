@@ -351,12 +351,14 @@ jobs:
           # A fence opens on 3+ backticks or tildes and closes only on a run of the same character,
           # at least as long, with nothing after it (CommonMark), so a nested example can't end it early.
           prose=$(awk '{
-              line = $0; sub(/^[[:space:]]+/, "", line)
+              line = $0; ind = match(line, /[^ ]/) ? RSTART - 1 : length(line); sub(/^[[:space:]]+/, "", line)
               if (match(line, /^(```+|~~~+)/)) {
                 run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
                 # The info string of a backtick opener may not contain a backtick: that line is inline code.
-                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
-                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
+                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); oind = ind; next }
+                # A closer has the same character, is at least as long, has nothing after it and is indented
+                # at most three spaces more than the opener; deeper lines are content.
+                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/ && ind <= oind + 3) { open = 0; next }
               }
               if (!open) print
             } END { if (open) print "UNCLOSED CODE FENCE" }' <<< "$reply")
@@ -585,12 +587,14 @@ jobs:
           # A fence opens on 3+ backticks or tildes and closes only on a run of the same character,
           # at least as long, with nothing after it (CommonMark), so a nested example can't end it early.
           prose=$(awk '{
-              line = $0; sub(/^[[:space:]]+/, "", line)
+              line = $0; ind = match(line, /[^ ]/) ? RSTART - 1 : length(line); sub(/^[[:space:]]+/, "", line)
               if (match(line, /^(```+|~~~+)/)) {
                 run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
                 # The info string of a backtick opener may not contain a backtick: that line is inline code.
-                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
-                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
+                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); oind = ind; next }
+                # A closer has the same character, is at least as long, has nothing after it and is indented
+                # at most three spaces more than the opener; deeper lines are content.
+                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/ && ind <= oind + 3) { open = 0; next }
               }
               if (!open) print
             } END { if (open) print "UNCLOSED CODE FENCE" }' <<< "$reply")
