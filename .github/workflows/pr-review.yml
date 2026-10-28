@@ -1,0 +1,18 @@
+name: PR Review
+
+# Reviews changes to this repository with the PR's own version of the shared
+# workflow, so a change to code-review.yml is proven before v1 moves.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    uses: ./.github/workflows/code-review.yml
+    # A called workflow's job permissions can't exceed the caller's.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    secrets: inherit

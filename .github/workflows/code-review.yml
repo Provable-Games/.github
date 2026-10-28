@@ -6,11 +6,14 @@ name: Code Review (reusable)
 #   - .github/review-agents.json  — agents: which diff paths to review, the
 #                                    prompt file, and a display name.
 #   - .github/prompts/*.md         — the review criteria each agent uses.
-# Everything generic (matrix build, prompt assembly, the codex sandbox
-# workaround, comment publishing, claude transcript extraction) lives here.
+# Everything generic (matrix build, prompt assembly, comment publishing,
+# claude transcript extraction) lives here.
 # Model and effort come from org Actions variables, and both CLIs install at
 # their latest release, so a model upgrade is one variable change for every
 # caller rather than an edit here.
+# Reviewers run on ubuntu-slim with full tool access (Claude: Bash, Edit, Write
+# and Agent under dontAsk; Codex: no sandbox, which slim cannot run) so they can
+# investigate with targeted commands; CI, not the reviewer, runs the full checks.
 #
 # Usage from a caller repo (.github/workflows/pr-review.yml):
 #   jobs:
@@ -46,6 +49,14 @@ on:
           are advisory unless a repo opts in.
         type: boolean
         default: false
+      setup_script:
+        description: >-
+          Optional caller-repo script run after checkout and before each
+          review, to install tools reviewers may need for targeted checks
+          (for example Scarb or pnpm). It runs in its own step on ubuntu-slim
+          with a 2-minute limit; add install directories to $GITHUB_PATH.
+        type: string
+        default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
@@ -54,7 +65,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       contents: read
       pull-requests: read
@@ -121,7 +132,9 @@ jobs:
     # just fail/post empty. (Same-repo PRs and same-org branches run normally.)
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && github.event.pull_request.head.repo.fork == false
     name: Claude - ${{ matrix.agent_name }}
-    runs-on: ubuntu-latest
+    # Reviews mostly wait on the model API; slim caps jobs at 15 minutes.
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     env:
       CLAUDE_REVIEW_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL }}
       CLAUDE_REVIEW_EFFORT: ${{ vars.CLAUDE_REVIEW_EFFORT }}
@@ -144,6 +157,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Set up review tools
+        if: inputs.setup_script != ''
+        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        timeout-minutes: 2
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+        run: bash "$SETUP_SCRIPT"
 
       - name: Build review prompt
         id: build-prompt
@@ -187,9 +208,15 @@ jobs:
             echo "---"
             echo ""
             cat <<'EOF'
+          Tools:
+          - You have full tool access: read and search any file, inspect git history, and run a
+            targeted command, script or single test when it confirms or rules out a specific finding.
+          - CI already runs the repository's checks and tests on this PR; don't rerun them.
+          - Never commit or push.
+
           Hard scope rules:
           - Every finding must cite a file from the allowed file list above.
-          - Do not inspect or mention files outside the allowed list.
+          - Read any file in the repository for context, but report only findings in allowed files.
           - If no actionable findings exist in scoped files, say exactly: lgtm
 
           Output requirements:
@@ -215,11 +242,26 @@ jobs:
       # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
+        # Below the job's 15 minutes, so a long review fails here and the comment still posts.
+        timeout-minutes: 12
         uses: anthropics/claude-code-action@v1
         with:
+          # The job token instead of the Claude app's OIDC exchange, which skips the review on any PR
+          # that changes a workflow file. This workflow posts the comment itself.
+          github_token: ${{ github.token }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.build-prompt.outputs.prompt }}
-          claude_args: --model ${{ env.CLAUDE_REVIEW_MODEL }} --effort ${{ env.CLAUDE_REVIEW_EFFORT }}
+          # Full tool access for investigation. The checkout's CLAUDE.md, settings, hooks, skills and
+          # MCP servers are not loaded.
+          claude_args: |
+            --model ${{ env.CLAUDE_REVIEW_MODEL }} --effort ${{ env.CLAUDE_REVIEW_EFFORT }}
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep,Agent"
+            --permission-mode dontAsk
+            --setting-sources user
+            --disable-slash-commands
+            --no-session-persistence
+            --strict-mcp-config
+            --mcp-config '{"mcpServers":{}}'
 
       - name: Extract Claude review output
         if: always()
@@ -300,7 +342,8 @@ jobs:
     # Skip on forks — secrets aren't available to fork PRs.
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && github.event.pull_request.head.repo.fork == false
     name: Codex - ${{ matrix.agent_name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     env:
       CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
       CODEX_REVIEW_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT }}
@@ -324,30 +367,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Enable Codex sandbox prerequisites
-        run: |
-          # Codex's bundled bubblewrap needs unprivileged user namespaces;
-          # Ubuntu 24.04 runners block them via AppArmor. Same workaround as
-          # openai/codex-action uses on GitHub-hosted runners.
-          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
-            sudo sysctl -w kernel.unprivileged_userns_clone=1
-          fi
-          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-
-      - name: Verify Codex sandbox
-        run: |
-          # codex exec exits 0 even when its sandbox is broken, so prove the
-          # sandbox can run a command before spending a review on it.
-          npx -y "$CODEX_NPM_SPEC" sandbox -c 'sandbox_mode="read-only"' -- true
+      - name: Set up review tools
+        if: inputs.setup_script != ''
+        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        timeout-minutes: 2
+        env:
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+        run: bash "$SETUP_SCRIPT"
 
       - name: Inject OAuth Session
         env:
@@ -398,6 +424,12 @@ jobs:
             echo "---"
             echo ""
             cat <<'EOF'
+          Tools:
+          - You have full tool access: read and search any file, inspect git history, and run a
+            targeted command, script or single test when it confirms or rules out a specific finding.
+          - CI already runs the repository's checks and tests on this PR; don't rerun them.
+          - Never commit or push.
+
           Output requirements:
           - Do not write a heading/title; the workflow will add the comment title.
           - If no actionable findings exist, output exactly: lgtm
@@ -416,6 +448,7 @@ jobs:
 
       - name: Run Codex review
         id: codex-review
+        timeout-minutes: 12
         env:
           CODEX_REVIEW_TIMEOUT_SECONDS: ${{ vars.CODEX_REVIEW_TIMEOUT_SECONDS }}
         run: |
@@ -424,12 +457,15 @@ jobs:
           if [ -n "${CODEX_REVIEW_TIMEOUT_SECONDS:-}" ]; then
             TIMEOUT_CMD=(timeout "$CODEX_REVIEW_TIMEOUT_SECONDS")
           fi
+          # No sandbox: slim's container lacks the user namespaces it needs, and the reviewer keeps
+          # full tool and network access, like Claude.
+          # The prompt goes on stdin: one argument is capped at 128 KiB, which a large PR exceeds.
           "${TIMEOUT_CMD[@]}" npx -y "$CODEX_NPM_SPEC" exec \
-            --sandbox read-only \
+            --sandbox danger-full-access \
             -c "model=\"$CODEX_REVIEW_MODEL\"" \
             -c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"" \
             -o /tmp/review.txt \
-            -- "$(cat /tmp/prompt.txt)" > /tmp/review-run.log 2>&1
+            - < /tmp/prompt.txt > /tmp/review-run.log 2>&1
           EXIT_CODE=$?
           set -e
           if [ "$EXIT_CODE" = "124" ] && [ -n "${CODEX_REVIEW_TIMEOUT_SECONDS:-}" ]; then

@@ -1,0 +1,10 @@
+{
+  "agents": [
+    {
+      "agent_id": "general",
+      "agent_name": "Shared Workflow Reviewer",
+      "prompt_file": ".github/prompts/shared-workflow-review.md",
+      "diff_paths": ["."]
+    }
+  ]
+}

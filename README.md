@@ -34,8 +34,8 @@ Only needs the read-only default token, so no caller `permissions` block.
 
 [`.github/workflows/code-review.yml`](.github/workflows/code-review.yml) runs
 matrixed Claude + Codex reviews on pull requests. All generic logic lives here
-(matrix build, prompt assembly, the codex sandbox workaround, comment
-publishing, claude transcript extraction). Each repo supplies only its own
+(matrix build, prompt assembly, comment publishing, claude transcript
+extraction). Each repo supplies only its own
 review config and prompts.
 
 ### Adopt it in a repo
@@ -54,8 +54,13 @@ review config and prompts.
    ```
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
-   `enable_claude` / `enable_codex` (default `true`), and
-   `block_on_severity` (default `false`).
+   `enable_claude` / `enable_codex` (default `true`),
+   `block_on_severity` (default `false`), and `setup_script` (default empty):
+   a script in your repo, run after checkout and before each review, that
+   installs tools reviewers may need for targeted checks, such as Scarb or
+   pnpm. It runs in its own step with a 2-minute limit, so add any install
+   directory to the path for the review step with
+   `echo "$dir" >> "$GITHUB_PATH"`.
 
    **`block_on_severity`** turns review into a merge gate: the review job
    fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
@@ -126,6 +131,20 @@ Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
 review would just fail/post empty). Same-repo and same-org branch PRs run
 normally.
 
+### Reviewer access and runners
+
+Reviewers have full tool access so they can investigate: Claude Code runs with
+`Bash,Read,Edit,Write,Glob,Grep,Agent` under `--permission-mode dontAsk`, and
+Codex runs without its sandbox. They read any file for context, inspect history
+and run targeted commands or single tests; CI runs the full checks, so they
+don't rerun them. The caller repo's `CLAUDE.md`, settings, hooks and MCP servers
+are not loaded. The accepted risk is that a write-access author can reach a
+review credential; the response is to revoke and rotate it.
+
+Both reviewers run on `ubuntu-slim` with a 15-minute job limit: reviews mostly
+wait on the model API. Slim's container cannot run Codex's sandbox, which is why
+Codex runs without it.
+
 ### Reviewer models and effort
 
 Model and effort come from org Actions variables, and both CLIs install at
@@ -138,7 +157,7 @@ Claude Code.
 | `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | for Claude | `--model` and `--effort` |
 | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | for Codex | `model` and `model_reasoning_effort` |
 | `CODEX_CLI_VERSION` | no | `@openai/codex` version, default `latest` |
-| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 12-minute review step |
 
 A reviewer whose model or effort variable is empty fails with an error rather
 than falling back to a stale default. If that happens, give the repository
