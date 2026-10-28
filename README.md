@@ -54,8 +54,11 @@ review config and prompts.
    ```
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
-   `enable_claude` / `enable_codex` (default `true`), and
-   `block_on_severity` (default `false`).
+   `enable_claude` / `enable_codex` (default `true`),
+   `block_on_severity` (default `false`), and `setup_script` (default empty):
+   a script in your repo, run after checkout and before each review, that
+   installs tools reviewers may need for targeted checks, such as Scarb or
+   pnpm.
 
    **`block_on_severity`** turns review into a merge gate: the review job
    fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
@@ -125,6 +128,20 @@ review config and prompts.
 Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
 review would just fail/post empty). Same-repo and same-org branch PRs run
 normally.
+
+### Reviewer access and runners
+
+Reviewers have full tool access so they can investigate: Claude Code runs with
+`Bash,Read,Edit,Write,Glob,Grep,Agent` under `--permission-mode dontAsk`, and
+Codex runs without its sandbox. They read any file for context, inspect history
+and run targeted commands or single tests; CI runs the full checks, so they
+don't rerun them. The caller repo's `CLAUDE.md`, settings, hooks and MCP servers
+are not loaded. The accepted risk is that a write-access author can reach a
+review credential; the response is to revoke and rotate it.
+
+Both reviewers run on `ubuntu-slim` with a 15-minute job limit: reviews mostly
+wait on the model API. Slim's container cannot run Codex's sandbox, which is why
+Codex runs without it.
 
 ### Reviewer models and effort
 
