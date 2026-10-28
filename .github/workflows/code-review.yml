@@ -374,8 +374,10 @@ jobs:
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
             exit 1
           fi
-          # The contract's explicit give-up must not pass as a clean review.
-          if grep -qE '^[*_[:space:]]*Review incomplete' /tmp/review.txt 2>/dev/null; then
+          # The contract's explicit give-up must not pass as a clean review. Fenced code is
+          # evidence, not the reply, so an example inside a finding does not count.
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
+          if grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
             exit 1
           fi
@@ -620,8 +622,10 @@ jobs:
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
             exit 1
           fi
-          # The contract's explicit give-up must not pass as a clean review.
-          if grep -qE '^[*_[:space:]]*Review incomplete' /tmp/review.txt 2>/dev/null; then
+          # The contract's explicit give-up must not pass as a clean review. Fenced code is
+          # evidence, not the reply, so an example inside a finding does not count.
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
+          if grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
             exit 1
           fi
