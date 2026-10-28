@@ -15,11 +15,8 @@ name: Code Review (reusable)
 # and Agent under dontAsk; Codex: no sandbox, which slim cannot run) so they can
 # investigate with targeted commands; CI, not the reviewer, runs the full checks.
 #
-# Usage from a caller repo (.github/workflows/pr-review.yml):
-#   jobs:
-#     review:
-#       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
-#       secrets: inherit
+# Usage from a caller repo: see the README's caller example (.github/workflows/pr-review.yml),
+# which grants the job permissions and passes the two review secrets.
 #
 # Org variables (Settings → Secrets and variables → Actions → Variables):
 #   CLAUDE_REVIEW_MODEL, CLAUDE_REVIEW_EFFORT  (required for Claude)
@@ -65,35 +62,16 @@ on:
 
 jobs:
   changes:
+    # pull_request edited also fires for closed and merged PRs; those need no review.
+    if: github.event.pull_request.state == 'open'
     runs-on: ubuntu-slim
     permissions:
       contents: read
       pull-requests: read
-      id-token: write
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has-reviews: ${{ steps.set-matrix.outputs.has-reviews }}
-      workflow-sha: ${{ steps.self.outputs.sha }}
     steps:
-      # The commit of this shared workflow (v1, a SHA, or a PR head in this repository's
-      # self-test), so the review jobs fetch review-instructions.md from the same revision.
-      - name: Resolve shared workflow revision
-        id: self
-        # Fork PRs get no id-token and skip the reviews, so the run stays green.
-        if: github.event.pull_request.head.repo.fork == false
-        run: |
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo "::error::Grant the review job id-token: write in the caller workflow (see the README)."
-            exit 1
-          fi
-          token=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=provable-games-code-review" | jq -r .value)
-          sha=$(python3 -c 'import base64, json, sys
-          p = sys.argv[1].split(".")[1]
-          print(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["job_workflow_sha"])' "$token")
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Could not resolve the shared workflow revision."; exit 1; }
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -104,12 +82,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
           if [ ! -f "$CONFIG_FILE" ]; then
             echo "config file not found: $CONFIG_FILE" >&2
             exit 1
           fi
-          CHANGED_FILES_JSON=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
-            | jq -R -s 'split("\n") | map(select(length > 0))')
+          # A file, not an argument: one argument is capped at 128 KiB, which a large PR exceeds.
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+            | jq -R -s 'split("\n") | map(select(length > 0))' > "$RUNNER_TEMP/changed-files.json"
           # An agent matches when a changed file is included by diff_paths AND
           # not covered by its optional exclude_paths (so "general" can be
           # everything-except-app-dirs). Agents without exclude_paths behave
@@ -120,8 +100,9 @@ jobs:
           # catch-all ("." or "./" or "") normalizes to the empty prefix, which
           # every path starts with; without that, "." would only match dotfiles
           # and a catch-all agent would silently skip README.md-only PRs.
-          MATRIX_JSON=$(jq -c --argjson changed_files "$CHANGED_FILES_JSON" '
+          MATRIX_JSON=$(jq -c --slurpfile changed "$RUNNER_TEMP/changed-files.json" '
           def norm_prefix: if . == "." or . == "./" or . == "" then "" else . end;
+          $changed[0] as $changed_files |
           {
             include: [
               .agents[]
@@ -180,11 +161,14 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch shared review instructions
+        # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
+        # in this repository's self-test), so the instructions always match it.
         env:
-          WORKFLOW_SHA: ${{ needs.changes.outputs.workflow-sha }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/review-instructions.md" \
-            "https://raw.githubusercontent.com/Provable-Games/.github/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
+            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
 
       - name: Set up review tools
         if: inputs.setup_script != ''
@@ -382,11 +366,14 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch shared review instructions
+        # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
+        # in this repository's self-test), so the instructions always match it.
         env:
-          WORKFLOW_SHA: ${{ needs.changes.outputs.workflow-sha }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/review-instructions.md" \
-            "https://raw.githubusercontent.com/Provable-Games/.github/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
+            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
 
       - name: Set up review tools
         if: inputs.setup_script != ''

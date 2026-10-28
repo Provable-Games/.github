@@ -62,8 +62,9 @@ review config and prompts.
          CODEX_AUTH_DOT_JSON: ${{ secrets.CODEX_AUTH_DOT_JSON }}
    ```
 
-   `id-token: write` lets the workflow find its own revision, so it fetches the
-   review instructions from that same commit.
+   The Claude job requests `id-token: write`, and a called workflow's
+   permissions can't exceed the caller's, so grant all four. `edited` reruns
+   the reviews when the title, body or base changes; closed PRs are skipped.
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
    `enable_claude` / `enable_codex` (default `true`),
@@ -78,13 +79,11 @@ review config and prompts.
    fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
    default — reviews are advisory unless a repo opts in:
 
+   Add a `with:` block to the caller job above:
+
    ```yaml
-   jobs:
-     review:
-       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
        with:
          block_on_severity: true
-       secrets: inherit
    ```
 
    The review comment is posted either way, so a blocking finding is always
