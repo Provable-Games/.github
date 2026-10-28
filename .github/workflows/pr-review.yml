@@ -14,6 +14,9 @@ concurrency:
 jobs:
   review:
     uses: ./.github/workflows/code-review.yml
+    # Exercise the severity gate on every change to the shared workflow.
+    with:
+      block_on_severity: true
     # A called workflow's job permissions can't exceed the caller's.
     permissions:
       contents: read

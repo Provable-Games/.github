@@ -42,8 +42,10 @@ on:
       block_on_severity:
         description: >-
           Fail the review job when a reviewer reports a [CRITICAL] or [HIGH]
-          finding, turning review into a merge gate. Off by default: reviews
-          are advisory unless a repo opts in.
+          finding heading, turning review into a merge gate. The gate fails
+          closed: an empty, missing, unrecognized or `Review incomplete:`
+          reply also fails. Off by default: reviews are advisory unless a repo
+          opts in.
         type: boolean
         default: false
       setup_script:
@@ -241,7 +243,9 @@ jobs:
             cat "$RUNNER_TEMP/review-instructions.md"
           } > /tmp/prompt.txt
 
-          DELIM="PROMPT_EOF_$(date +%s)"
+          # Unguessable, so PR text cannot end the output early and replace the prompt.
+          DELIM="PROMPT_$(openssl rand -hex 16)"
+          if grep -qF "$DELIM" /tmp/prompt.txt 2>/dev/null; then echo "::error::Prompt delimiter collision"; exit 1; fi
           {
             echo "prompt<<${DELIM}"
             cat /tmp/prompt.txt
@@ -334,22 +338,32 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on !cancelled() so it also fires when an earlier step
-      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
-      # replied `Review incomplete:` does.
+      # failed, but not after a newer push or edit cancelled the run. It fails closed: an
+      # empty, missing or unrecognized reply blocks, as does `Review incomplete:`.
       - name: Fail on blocking findings
         if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
-          if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
+          # The reply as posted: a leading echo of the comment title is dropped, and only the
+          # outer whitespace is trimmed. Fenced code is evidence, not structure.
+          reply=$(sed -E '1{/^## .*Code Review/d}' /tmp/review.txt 2>/dev/null || true)
+          reply="${reply#"${reply%%[![:space:]]*}"}"
+          reply="${reply%"${reply##*[![:space:]]}"}"
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' <<< "$reply")
+          # Severity comes from finding headings only, so a quoted [HIGH] cannot block.
+          if grep -qE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
-            grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            grep -nE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"
             exit 1
           fi
-          # The contract's explicit give-up must not pass as a clean review. Fenced code is
-          # evidence, not the reply.
-          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
           # A reply with findings completed; only a reply without any can be a give-up.
-          if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
+          has_findings=$(grep -cE '^[[:space:]]*### \[(CRITICAL|HIGH|MEDIUM|LOW)\] ' <<< "$prose" || true)
+          if [ "$has_findings" = 0 ] && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
+            exit 1
+          fi
+          # Fail closed: an empty, missing or unrecognized reply is not a clean review.
+          if [ "$reply" != lgtm ] && [ "$has_findings" = 0 ]; then
+            echo "::error::Review produced no verdict: neither lgtm nor findings"
             exit 1
           fi
           echo "No blocking findings"
@@ -543,22 +557,32 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on !cancelled() so it also fires when an earlier step
-      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
-      # replied `Review incomplete:` does.
+      # failed, but not after a newer push or edit cancelled the run. It fails closed: an
+      # empty, missing or unrecognized reply blocks, as does `Review incomplete:`.
       - name: Fail on blocking findings
         if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
-          if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
+          # The reply as posted: a leading echo of the comment title is dropped, and only the
+          # outer whitespace is trimmed. Fenced code is evidence, not structure.
+          reply=$(sed -E '1{/^## .*Code Review/d}' /tmp/review.txt 2>/dev/null || true)
+          reply="${reply#"${reply%%[![:space:]]*}"}"
+          reply="${reply%"${reply##*[![:space:]]}"}"
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' <<< "$reply")
+          # Severity comes from finding headings only, so a quoted [HIGH] cannot block.
+          if grep -qE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
-            grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            grep -nE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"
             exit 1
           fi
-          # The contract's explicit give-up must not pass as a clean review. Fenced code is
-          # evidence, not the reply.
-          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
           # A reply with findings completed; only a reply without any can be a give-up.
-          if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
+          has_findings=$(grep -cE '^[[:space:]]*### \[(CRITICAL|HIGH|MEDIUM|LOW)\] ' <<< "$prose" || true)
+          if [ "$has_findings" = 0 ] && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
+            exit 1
+          fi
+          # Fail closed: an empty, missing or unrecognized reply is not a clean review.
+          if [ "$reply" != lgtm ] && [ "$has_findings" = 0 ]; then
+            echo "::error::Review produced no verdict: neither lgtm nor findings"
             exit 1
           fi
           echo "No blocking findings"

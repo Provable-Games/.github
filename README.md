@@ -81,7 +81,8 @@ review config and prompts.
    `echo "$dir" >> "$GITHUB_PATH"`.
 
    **`block_on_severity`** turns review into a merge gate: the review job
-   fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
+   fails when a reviewer reports a `### [CRITICAL]` or `### [HIGH]` finding
+   heading (outside fenced code; a quoted severity doesn't count). Off by
    default — reviews are advisory unless a repo opts in:
 
    Add a `with:` block to the caller job above:
@@ -92,9 +93,10 @@ review config and prompts.
    ```
 
    The review comment is posted either way, so a blocking finding is always
-   visible before the job goes red. A reply of `Review incomplete: <reason>`
-   also fails the job. A review that errored or produced no output does not
-   block on its own.
+   visible before the job goes red. The gate fails closed: a reply of
+   `Review incomplete: <reason>`, an empty or missing reply, or one that is
+   neither exactly `lgtm` nor findings also fails the job. Advisory callers
+   (without `block_on_severity`) are unaffected.
 
 2. Add `.github/review-agents.json` describing what to review:
 
