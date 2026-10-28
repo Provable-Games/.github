@@ -48,7 +48,8 @@ review config and prompts.
      pull_request:
        # edited: re-review a corrected title, body or base.
        types: [opened, synchronize, reopened, ready_for_review, edited]
-   # Optional: the shared workflow also cancels its own previous review of the PR.
+   # Optional: the shared workflow also cancels its own previous review of the PR. If you
+   # keep a group of your own, keep cancel-in-progress: true; a queuing group delays that.
    concurrency:
      group: pr-review-${{ github.event.pull_request.number }}
      cancel-in-progress: true

@@ -61,10 +61,11 @@ on:
         required: false
 
 # A new push or edit to the PR cancels the previous review of it, every job and matrix agent,
-# whatever concurrency the caller declares. The prefix keeps this group distinct from the
-# caller's own, and the caller workflow and config path keep separate callers apart.
+# unless the caller's own concurrency group queues runs (cancel-in-progress: false); callers
+# should omit their own group or set cancel-in-progress: true. The prefix keeps this group
+# distinct from the caller's, and the caller workflow and every input keep separate calls apart.
 concurrency:
-  group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.workflow }}-${{ inputs.config_path }}
+  group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.workflow }}-${{ inputs.config_path }}-${{ inputs.enable_claude }}-${{ inputs.enable_codex }}-${{ inputs.block_on_severity }}-${{ inputs.setup_script }}
   cancel-in-progress: true
 
 jobs:
