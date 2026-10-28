@@ -64,6 +64,11 @@ jobs:
   changes:
     # pull_request edited also fires for closed and merged PRs; those need no review.
     if: github.event.pull_request.state == 'open'
+    # A new push or edit to the PR cancels every job still running for it, whatever the
+    # caller's own concurrency. The prefix keeps these groups distinct from the caller's.
+    concurrency:
+      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-changes
+      cancel-in-progress: true
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -134,6 +139,9 @@ jobs:
     # just fail/post empty. (Same-repo PRs and same-org branches run normally.)
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && github.event.pull_request.head.repo.fork == false
     name: Claude - ${{ matrix.agent_name }}
+    concurrency:
+      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-claude-${{ matrix.agent_id }}
+      cancel-in-progress: true
     # Reviews mostly wait on the model API; slim caps jobs at 15 minutes.
     runs-on: ubuntu-slim
     timeout-minutes: 15
@@ -350,6 +358,9 @@ jobs:
     # Skip on forks — secrets aren't available to fork PRs.
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && github.event.pull_request.head.repo.fork == false
     name: Codex - ${{ matrix.agent_name }}
+    concurrency:
+      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-codex-${{ matrix.agent_id }}
+      cancel-in-progress: true
     runs-on: ubuntu-slim
     timeout-minutes: 15
     env:
