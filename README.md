@@ -122,6 +122,27 @@ review config and prompts.
 3. Add the prompt file(s) referenced above (`.github/prompts/sdk-review.md`),
    containing the review criteria for that scope.
 
+### Review output format
+
+Every review uses one org-wide format, which this workflow appends after the
+repository prompt, so caller prompts hold review criteria only and define no
+output format of their own. A clean review is exactly `lgtm`. Otherwise each
+finding is:
+
+```
+### [SEVERITY] path/to/file.ext:LINE — what is wrong
+**Likelihood:** Likely|Possible|Rare · **Effort:** Small|Medium|Large · **Do:** This PR|Follow-up · **Origin:** Introduced|Exposed|Pre-existing · **Evidence:** Verified|Inferred
+
+- **Trigger:** what causes it.
+- **Impact:** what breaks, for whom.
+- **Fix:** the concrete change.
+```
+
+`Do` says whether to fix it in this PR or in a follow-up issue or PR. A review
+that cannot run because review material is missing replies
+`Review incomplete: <reason>`. The full contract, with the severity,
+likelihood, effort and `Do` definitions, is in `code-review.yml`.
+
 ### Secrets (org-level, inherited)
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — for the Claude reviewer.
