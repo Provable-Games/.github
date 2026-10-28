@@ -241,7 +241,9 @@ jobs:
             cat "$RUNNER_TEMP/review-instructions.md"
           } > /tmp/prompt.txt
 
-          DELIM="PROMPT_EOF_$(date +%s)"
+          # Unguessable, so PR text cannot end the output early and replace the prompt.
+          DELIM="PROMPT_$(openssl rand -hex 16)"
+          if grep -qF "$DELIM" /tmp/prompt.txt 2>/dev/null; then echo "::error::Prompt delimiter collision"; exit 1; fi
           {
             echo "prompt<<${DELIM}"
             cat /tmp/prompt.txt
@@ -334,8 +336,8 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on !cancelled() so it also fires when an earlier step
-      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
-      # replied `Review incomplete:` does.
+      # failed, but not after a newer push or edit cancelled the run. It fails closed: an
+      # empty, missing or unrecognized reply blocks, as does `Review incomplete:`.
       - name: Fail on blocking findings
         if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
@@ -350,6 +352,12 @@ jobs:
           # A reply with findings completed; only a reply without any can be a give-up.
           if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
+            exit 1
+          fi
+          # Fail closed: an empty, missing or unrecognized reply is not a clean review.
+          reply=$(tr -d '[:space:]' < /tmp/review.txt 2>/dev/null || true)
+          if [ "$reply" != lgtm ] && ! grep -qE '^### \[(CRITICAL|HIGH|MEDIUM|LOW)\] ' <<< "$prose"; then
+            echo "::error::Review produced no verdict: neither lgtm nor findings"
             exit 1
           fi
           echo "No blocking findings"
@@ -543,8 +551,8 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on !cancelled() so it also fires when an earlier step
-      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
-      # replied `Review incomplete:` does.
+      # failed, but not after a newer push or edit cancelled the run. It fails closed: an
+      # empty, missing or unrecognized reply blocks, as does `Review incomplete:`.
       - name: Fail on blocking findings
         if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
@@ -559,6 +567,12 @@ jobs:
           # A reply with findings completed; only a reply without any can be a give-up.
           if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
             echo "::error::Review reported itself incomplete"
+            exit 1
+          fi
+          # Fail closed: an empty, missing or unrecognized reply is not a clean review.
+          reply=$(tr -d '[:space:]' < /tmp/review.txt 2>/dev/null || true)
+          if [ "$reply" != lgtm ] && ! grep -qE '^### \[(CRITICAL|HIGH|MEDIUM|LOW)\] ' <<< "$prose"; then
+            echo "::error::Review produced no verdict: neither lgtm nor findings"
             exit 1
           fi
           echo "No blocking findings"
