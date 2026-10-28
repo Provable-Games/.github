@@ -219,7 +219,8 @@ jobs:
           - Read any file in the repository for context, but report only findings in allowed files.
           - If no actionable findings exist in scoped files, say exactly: lgtm
 
-          Output requirements:
+          Output requirements (if the repository prompt above defines its own output format,
+          follow that format instead; the scope and tool rules still apply):
           - Do not write a heading/title; the workflow will add the comment title.
           - Keep findings strictly scoped to files in the allowed list.
           - Keep the comment concise: list only actionable findings, ordered by severity.
@@ -430,7 +431,8 @@ jobs:
           - CI already runs the repository's checks and tests on this PR; don't rerun them.
           - Never commit or push.
 
-          Output requirements:
+          Output requirements (if the repository prompt above defines its own output format,
+          follow that format instead; the scope and tool rules still apply):
           - Do not write a heading/title; the workflow will add the comment title.
           - If no actionable findings exist, output exactly: lgtm
           - Otherwise, keep the comment concise: list only actionable findings, ordered by severity.
