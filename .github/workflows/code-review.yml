@@ -15,11 +15,8 @@ name: Code Review (reusable)
 # and Agent under dontAsk; Codex: no sandbox, which slim cannot run) so they can
 # investigate with targeted commands; CI, not the reviewer, runs the full checks.
 #
-# Usage from a caller repo (.github/workflows/pr-review.yml):
-#   jobs:
-#     review:
-#       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
-#       secrets: inherit
+# Usage from a caller repo: see the README's caller example (.github/workflows/pr-review.yml),
+# which grants the job permissions and passes the two review secrets.
 #
 # Org variables (Settings → Secrets and variables → Actions → Variables):
 #   CLAUDE_REVIEW_MODEL, CLAUDE_REVIEW_EFFORT  (required for Claude)
@@ -63,8 +60,18 @@ on:
       CODEX_AUTH_DOT_JSON:
         required: false
 
+# A new push or edit to the PR cancels the previous review of it, every job and matrix agent,
+# unless the caller's own concurrency group queues runs (cancel-in-progress: false); callers
+# should omit their own group or set cancel-in-progress: true. The prefix keeps this group
+# distinct from the caller's, and the caller workflow and every input keep separate calls apart.
+concurrency:
+  group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.workflow }}-${{ inputs.config_path }}-${{ inputs.enable_claude }}-${{ inputs.enable_codex }}-${{ inputs.block_on_severity }}-${{ inputs.setup_script }}
+  cancel-in-progress: true
+
 jobs:
   changes:
+    # pull_request edited also fires for closed and merged PRs; those need no review.
+    if: github.event.pull_request.state == 'open'
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -83,12 +90,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -euo pipefail
           if [ ! -f "$CONFIG_FILE" ]; then
             echo "config file not found: $CONFIG_FILE" >&2
             exit 1
           fi
-          CHANGED_FILES_JSON=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
-            | jq -R -s 'split("\n") | map(select(length > 0))')
+          # A file, not an argument: one argument is capped at 128 KiB, which a large PR exceeds.
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+            | jq -R -s 'split("\n") | map(select(length > 0))' > "$RUNNER_TEMP/changed-files.json"
           # An agent matches when a changed file is included by diff_paths AND
           # not covered by its optional exclude_paths (so "general" can be
           # everything-except-app-dirs). Agents without exclude_paths behave
@@ -99,8 +108,9 @@ jobs:
           # catch-all ("." or "./" or "") normalizes to the empty prefix, which
           # every path starts with; without that, "." would only match dotfiles
           # and a catch-all agent would silently skip README.md-only PRs.
-          MATRIX_JSON=$(jq -c --argjson changed_files "$CHANGED_FILES_JSON" '
+          MATRIX_JSON=$(jq -c --slurpfile changed "$RUNNER_TEMP/changed-files.json" '
           def norm_prefix: if . == "." or . == "./" or . == "" then "" else . end;
+          $changed[0] as $changed_files |
           {
             include: [
               .agents[]
@@ -158,9 +168,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch shared review instructions
+        timeout-minutes: 1
+        # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
+        # in this repository's self-test), so the instructions always match it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository or job.workflow_sha is empty; cannot fetch the review instructions."
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$WORKFLOW_REPOSITORY/contents/.github/prompts/review-instructions.md?ref=$WORKFLOW_SHA" \
+              > "$RUNNER_TEMP/review-instructions.md" && [ -s "$RUNNER_TEMP/review-instructions.md" ] && break
+            [ "$attempt" -lt 3 ] || { echo "::error::Could not fetch the review instructions."; exit 1; }
+            sleep 5
+          done
+
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -207,29 +238,7 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            cat <<'EOF'
-          Tools:
-          - You have full tool access: read and search any file, inspect git history, and run a
-            targeted command, script or single test when it confirms or rules out a specific finding.
-          - CI already runs the repository's checks and tests on this PR; don't rerun them.
-          - Never commit or push.
-
-          Hard scope rules:
-          - Every finding must cite a file from the allowed file list above.
-          - Read any file in the repository for context, but report only findings in allowed files.
-          - If no actionable findings exist in scoped files, say exactly: lgtm
-
-          Output requirements:
-          - Do not write a heading/title; the workflow will add the comment title.
-          - Keep findings strictly scoped to files in the allowed list.
-          - Keep the comment concise: list only actionable findings, ordered by severity.
-          - Do not include summaries, praise, or testing-gap notes unless tied to a specific finding.
-          - Limit the review to the highest-signal findings.
-          - Format each finding as:
-            [SEVERITY] file_path:line_number - description
-            Impact: what breaks and when
-            Fix: concrete code change
-          EOF
+            cat "$RUNNER_TEMP/review-instructions.md"
           } > /tmp/prompt.txt
 
           DELIM="PROMPT_EOF_$(date +%s)"
@@ -242,8 +251,8 @@ jobs:
       # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
-        # Below the job's 15 minutes, so a long review fails here and the comment still posts.
-        timeout-minutes: 12
+        # 10 of the job's 15 minutes, leaving room for checkout, setup, fetch and the comment.
+        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         with:
           # The job token instead of the Claude app's OIDC exchange, which skips the review on any PR
@@ -264,7 +273,7 @@ jobs:
             --mcp-config '{"mcpServers":{}}'
 
       - name: Extract Claude review output
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
         run: |
@@ -293,7 +302,7 @@ jobs:
           fi
 
       - name: Post review comment
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -324,15 +333,23 @@ jobs:
 
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
-      # goes red. Runs on always() so it also fires when an earlier step
-      # failed — a review that produced no output cannot match, so it will
-      # not block.
+      # goes red. Runs on !cancelled() so it also fires when an earlier step
+      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
+      # replied `Review incomplete:` does.
       - name: Fail on blocking findings
-        if: always() && inputs.block_on_severity
+        if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          # The contract's explicit give-up must not pass as a clean review. Fenced code is
+          # evidence, not the reply.
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
+          # A reply with findings completed; only a reply without any can be a give-up.
+          if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
+            echo "::error::Review reported itself incomplete"
             exit 1
           fi
           echo "No blocking findings"
@@ -367,9 +384,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch shared review instructions
+        timeout-minutes: 1
+        # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
+        # in this repository's self-test), so the instructions always match it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository or job.workflow_sha is empty; cannot fetch the review instructions."
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$WORKFLOW_REPOSITORY/contents/.github/prompts/review-instructions.md?ref=$WORKFLOW_SHA" \
+              > "$RUNNER_TEMP/review-instructions.md" && [ -s "$RUNNER_TEMP/review-instructions.md" ] && break
+            [ "$attempt" -lt 3 ] || { echo "::error::Could not fetch the review instructions."; exit 1; }
+            sleep 5
+          done
+
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -423,32 +461,12 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            cat <<'EOF'
-          Tools:
-          - You have full tool access: read and search any file, inspect git history, and run a
-            targeted command, script or single test when it confirms or rules out a specific finding.
-          - CI already runs the repository's checks and tests on this PR; don't rerun them.
-          - Never commit or push.
-
-          Output requirements:
-          - Do not write a heading/title; the workflow will add the comment title.
-          - If no actionable findings exist, output exactly: lgtm
-          - Otherwise, keep the comment concise: list only actionable findings, ordered by severity.
-          - Do not include summaries, praise, or testing-gap notes unless tied to a specific finding.
-          - Limit the review to the highest-signal findings.
-
-          Format each finding as:
-          [SEVERITY] file_path:line_number - description
-          Impact: what breaks and when
-          Fix: concrete code change
-
-          Where SEVERITY is one of: CRITICAL, HIGH, MEDIUM, LOW, INFO
-          EOF
+            cat "$RUNNER_TEMP/review-instructions.md"
           } > /tmp/prompt.txt
 
       - name: Run Codex review
         id: codex-review
-        timeout-minutes: 12
+        timeout-minutes: 10
         env:
           CODEX_REVIEW_TIMEOUT_SECONDS: ${{ vars.CODEX_REVIEW_TIMEOUT_SECONDS }}
         run: |
@@ -480,7 +498,7 @@ jobs:
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Post review comment
-        if: always() && steps.codex-review.outcome != 'skipped'
+        if: ${{ !cancelled() && steps.codex-review.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -524,15 +542,23 @@ jobs:
 
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
-      # goes red. Runs on always() so it also fires when an earlier step
-      # failed — a review that produced no output cannot match, so it will
-      # not block.
+      # goes red. Runs on !cancelled() so it also fires when an earlier step
+      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
+      # replied `Review incomplete:` does.
       - name: Fail on blocking findings
-        if: always() && inputs.block_on_severity
+        if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          # The contract's explicit give-up must not pass as a clean review. Fenced code is
+          # evidence, not the reply.
+          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' /tmp/review.txt 2>/dev/null || true)
+          # A reply with findings completed; only a reply without any can be a give-up.
+          if ! grep -qE '^### \[' <<< "$prose" && grep -qE '^[*_`>[:space:]]*Review incomplete' <<< "$prose"; then
+            echo "::error::Review reported itself incomplete"
             exit 1
           fi
           echo "No blocking findings"

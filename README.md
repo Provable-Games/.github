@@ -46,12 +46,30 @@ review config and prompts.
    name: PR Review
    on:
      pull_request:
-       types: [opened, synchronize, reopened, ready_for_review]
+       # edited: re-review a corrected title, body or base.
+       types: [opened, synchronize, reopened, ready_for_review, edited]
+   # Optional: the shared workflow also cancels its own previous review of the PR. If you
+   # keep a group of your own, keep cancel-in-progress: true; a queuing group delays that.
+   concurrency:
+     group: pr-review-${{ github.event.pull_request.number }}
+     cancel-in-progress: true
    jobs:
      review:
        uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
-       secrets: inherit
+       # A called workflow's job permissions can't exceed the caller's.
+       permissions:
+         contents: read
+         issues: write
+         pull-requests: write
+         id-token: write
+       secrets:
+         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+         CODEX_AUTH_DOT_JSON: ${{ secrets.CODEX_AUTH_DOT_JSON }}
    ```
+
+   The Claude job requests `id-token: write`, and a called workflow's
+   permissions can't exceed the caller's, so grant all four. `edited` reruns
+   the reviews when the title, body or base changes; closed PRs are skipped.
 
    Optional inputs: `config_path` (default `.github/review-agents.json`),
    `enable_claude` / `enable_codex` (default `true`),
@@ -66,18 +84,17 @@ review config and prompts.
    fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
    default — reviews are advisory unless a repo opts in:
 
+   Add a `with:` block to the caller job above:
+
    ```yaml
-   jobs:
-     review:
-       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
        with:
          block_on_severity: true
-       secrets: inherit
    ```
 
    The review comment is posted either way, so a blocking finding is always
-   visible before the job goes red. A review that errored or produced no
-   output cannot match, so it never blocks on its own.
+   visible before the job goes red. A reply of `Review incomplete: <reason>`
+   also fails the job. A review that errored or produced no output does not
+   block on its own.
 
 2. Add `.github/review-agents.json` describing what to review:
 
@@ -122,10 +139,41 @@ review config and prompts.
 3. Add the prompt file(s) referenced above (`.github/prompts/sdk-review.md`),
    containing the review criteria for that scope.
 
-### Secrets (org-level, inherited)
+### Review output format
+
+Every review uses one org-wide format, which this workflow appends after the
+repository prompt, so caller prompts hold review criteria only and define no
+output format of their own. A clean review is exactly `lgtm`. Otherwise each
+finding is:
+
+```
+### [SEVERITY] path/to/file.ext:LINE — what is wrong
+**Likelihood:** Likely|Possible|Rare · **Effort:** Small|Medium|Large · **Do:** This PR|Follow-up · **Origin:** Introduced|Exposed|Pre-existing · **Evidence:** Verified|Inferred
+
+- **Trigger:** what causes it.
+- **Impact:** what breaks, for whom.
+- **Fix:** the concrete change.
+```
+
+A review with findings ends with `**Complexity:** Low|Medium|High — why`.
+`Do` says whether to fix it in this PR or in a follow-up issue or PR. Beyond
+the repository's own criteria, every review checks that tests cover edge and
+extreme cases, reports only significant simplifications, flags a PR
+description that doesn't match the diff, and for smart contracts looks for
+significant gas and CASM-size savings. A review
+that cannot run because review material is missing replies
+`Review incomplete: <reason>`. The full contract, with the severity,
+likelihood, effort and `Do` definitions, is
+[`.github/prompts/review-instructions.md`](.github/prompts/review-instructions.md),
+which both reviewers get after the repository prompt.
+
+### Secrets (org-level)
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — for the Claude reviewer.
 - `CODEX_AUTH_DOT_JSON` — `~/.codex/auth.json` contents for the Codex reviewer.
+
+The caller passes these two by name, as in the example above, rather than
+`secrets: inherit`.
 
 Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
 review would just fail/post empty). Same-repo and same-org branch PRs run
@@ -157,7 +205,7 @@ Claude Code.
 | `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | for Claude | `--model` and `--effort` |
 | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | for Codex | `model` and `model_reasoning_effort` |
 | `CODEX_CLI_VERSION` | no | `@openai/codex` version, default `latest` |
-| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 12-minute review step |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 10-minute review step |
 
 A reviewer whose model or effort variable is empty fails with an error rather
 than falling back to a stale default. If that happens, give the repository

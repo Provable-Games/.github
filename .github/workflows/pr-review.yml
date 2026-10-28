@@ -4,7 +4,12 @@ name: PR Review
 # workflow, so a change to code-review.yml is proven before v1 moves.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+# One review per PR at a time: a push or an edit cancels the run in progress.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review:
