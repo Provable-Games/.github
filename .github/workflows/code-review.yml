@@ -364,14 +364,19 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on always() so it also fires when an earlier step
-      # failed — a review that produced no output cannot match, so it will
-      # not block.
+      # failed. A review that produced no output does not block; one that
+      # replied `Review incomplete:` does.
       - name: Fail on blocking findings
         if: always() && inputs.block_on_severity
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          # The contract's explicit give-up must not pass as a clean review.
+          if grep -qE '^[*_[:space:]]*Review incomplete' /tmp/review.txt 2>/dev/null; then
+            echo "::error::Review reported itself incomplete"
             exit 1
           fi
           echo "No blocking findings"
@@ -605,14 +610,19 @@ jobs:
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
       # goes red. Runs on always() so it also fires when an earlier step
-      # failed — a review that produced no output cannot match, so it will
-      # not block.
+      # failed. A review that produced no output does not block; one that
+      # replied `Review incomplete:` does.
       - name: Fail on blocking findings
         if: always() && inputs.block_on_severity
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
             grep -nE '\[(CRITICAL|HIGH)\]' /tmp/review.txt
+            exit 1
+          fi
+          # The contract's explicit give-up must not pass as a clean review.
+          if grep -qE '^[*_[:space:]]*Review incomplete' /tmp/review.txt 2>/dev/null; then
+            echo "::error::Review reported itself incomplete"
             exit 1
           fi
           echo "No blocking findings"

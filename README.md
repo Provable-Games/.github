@@ -76,8 +76,9 @@ review config and prompts.
    ```
 
    The review comment is posted either way, so a blocking finding is always
-   visible before the job goes red. A review that errored or produced no
-   output cannot match, so it never blocks on its own.
+   visible before the job goes red. A reply of `Review incomplete: <reason>`
+   also fails the job. A review that errored or produced no output does not
+   block on its own.
 
 2. Add `.github/review-agents.json` describing what to review:
 
