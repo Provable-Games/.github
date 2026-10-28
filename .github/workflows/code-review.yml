@@ -53,7 +53,8 @@ on:
         description: >-
           Optional caller-repo script run after checkout and before each
           review, to install tools reviewers may need for targeted checks
-          (for example Scarb or pnpm). Reviews run on ubuntu-slim.
+          (for example Scarb or pnpm). It runs in its own step on ubuntu-slim
+          with a 2-minute limit; add install directories to $GITHUB_PATH.
         type: string
         default: ""
     secrets:
@@ -159,6 +160,8 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
+        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
         run: bash "$SETUP_SCRIPT"
@@ -366,6 +369,8 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
+        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
         run: bash "$SETUP_SCRIPT"

@@ -58,7 +58,9 @@ review config and prompts.
    `block_on_severity` (default `false`), and `setup_script` (default empty):
    a script in your repo, run after checkout and before each review, that
    installs tools reviewers may need for targeted checks, such as Scarb or
-   pnpm.
+   pnpm. It runs in its own step with a 2-minute limit, so add any install
+   directory to the path for the review step with
+   `echo "$dir" >> "$GITHUB_PATH"`.
 
    **`block_on_severity`** turns review into a merge gate: the review job
    fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
@@ -155,7 +157,7 @@ Claude Code.
 | `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | for Claude | `--model` and `--effort` |
 | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | for Codex | `model` and `model_reasoning_effort` |
 | `CODEX_CLI_VERSION` | no | `@openai/codex` version, default `latest` |
-| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 12-minute review step |
 
 A reviewer whose model or effort variable is empty fails with an error rather
 than falling back to a stale default. If that happens, give the repository
