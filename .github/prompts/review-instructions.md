@@ -52,6 +52,11 @@ Rules
   unrelated to this PR only when it is CRITICAL.
 - Evidence. Verified: you ran something or read the exact code path end to end; name the
   command or path in Trigger. Inferred: reasoned from reading; say so there.
+- PR description. Check the PR title and body against the diff. A claim the diff does not
+  support (a change, check, file, number or behavior that is not true of the code), or a
+  material change the description leaves out, is a MEDIUM finding with Effort Small, Do
+  This PR and Origin Introduced. Locate it at the changed file and line the claim concerns,
+  or the first changed file when there is none.
 - Location is one repository-relative path and one head-revision line. Mention secondary
   locations in the fields.
 - One finding per root cause. Merge duplicates. Report at most 8 findings, highest signal first.
