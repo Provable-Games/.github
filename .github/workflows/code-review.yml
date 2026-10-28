@@ -272,7 +272,7 @@ jobs:
             --mcp-config '{"mcpServers":{}}'
 
       - name: Extract Claude review output
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
         run: |
@@ -301,7 +301,7 @@ jobs:
           fi
 
       - name: Post review comment
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -332,11 +332,11 @@ jobs:
 
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
-      # goes red. Runs on always() so it also fires when an earlier step
-      # failed. A review that produced no output does not block; one that
+      # goes red. Runs on !cancelled() so it also fires when an earlier step
+      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
       # replied `Review incomplete:` does.
       - name: Fail on blocking findings
-        if: always() && inputs.block_on_severity
+        if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
@@ -499,7 +499,7 @@ jobs:
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Post review comment
-        if: always() && steps.codex-review.outcome != 'skipped'
+        if: ${{ !cancelled() && steps.codex-review.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -543,11 +543,11 @@ jobs:
 
       # Opt-in merge gate. The review comment is posted by the step above
       # regardless, so a blocking finding still gets posted before the job
-      # goes red. Runs on always() so it also fires when an earlier step
-      # failed. A review that produced no output does not block; one that
+      # goes red. Runs on !cancelled() so it also fires when an earlier step
+      # failed, but not after a newer push or edit cancelled the run. A review that produced no output does not block; one that
       # replied `Review incomplete:` does.
       - name: Fail on blocking findings
-        if: always() && inputs.block_on_severity
+        if: ${{ !cancelled() && inputs.block_on_severity }}
         run: |
           if [ -s /tmp/review.txt ] && grep -qE '\[(CRITICAL|HIGH)\]' /tmp/review.txt; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
