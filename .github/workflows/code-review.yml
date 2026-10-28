@@ -60,15 +60,17 @@ on:
       CODEX_AUTH_DOT_JSON:
         required: false
 
+# A new push or edit to the PR cancels the previous review of it, every job and matrix agent,
+# whatever concurrency the caller declares. The prefix keeps this group distinct from the
+# caller's own, and the caller workflow and config path keep separate callers apart.
+concurrency:
+  group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.workflow }}-${{ inputs.config_path }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     # pull_request edited also fires for closed and merged PRs; those need no review.
     if: github.event.pull_request.state == 'open'
-    # A new push or edit to the PR cancels every job still running for it, whatever the
-    # caller's own concurrency. The prefix keeps these groups distinct from the caller's.
-    concurrency:
-      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-changes
-      cancel-in-progress: true
     runs-on: ubuntu-slim
     permissions:
       contents: read
@@ -139,9 +141,6 @@ jobs:
     # just fail/post empty. (Same-repo PRs and same-org branches run normally.)
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_claude && github.event.pull_request.head.repo.fork == false
     name: Claude - ${{ matrix.agent_name }}
-    concurrency:
-      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-claude-${{ matrix.agent_id }}
-      cancel-in-progress: true
     # Reviews mostly wait on the model API; slim caps jobs at 15 minutes.
     runs-on: ubuntu-slim
     timeout-minutes: 15
@@ -169,6 +168,7 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch shared review instructions
+        timeout-minutes: 1
         # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
         # in this repository's self-test), so the instructions always match it.
         env:
@@ -190,7 +190,7 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -250,8 +250,8 @@ jobs:
       # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
-        # Below the job's 15 minutes, so a long review fails here and the comment still posts.
-        timeout-minutes: 12
+        # 10 of the job's 15 minutes, leaving room for checkout, setup, fetch and the comment.
+        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         with:
           # The job token instead of the Claude app's OIDC exchange, which skips the review on any PR
@@ -358,9 +358,6 @@ jobs:
     # Skip on forks — secrets aren't available to fork PRs.
     if: needs.changes.outputs.has-reviews == 'true' && inputs.enable_codex && github.event.pull_request.head.repo.fork == false
     name: Codex - ${{ matrix.agent_name }}
-    concurrency:
-      group: shared-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}-codex-${{ matrix.agent_id }}
-      cancel-in-progress: true
     runs-on: ubuntu-slim
     timeout-minutes: 15
     env:
@@ -387,6 +384,7 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch shared review instructions
+        timeout-minutes: 1
         # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
         # in this repository's self-test), so the instructions always match it.
         env:
@@ -408,7 +406,7 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 12-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -467,7 +465,7 @@ jobs:
 
       - name: Run Codex review
         id: codex-review
-        timeout-minutes: 12
+        timeout-minutes: 10
         env:
           CODEX_REVIEW_TIMEOUT_SECONDS: ${{ vars.CODEX_REVIEW_TIMEOUT_SECONDS }}
         run: |

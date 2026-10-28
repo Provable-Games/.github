@@ -48,7 +48,7 @@ review config and prompts.
      pull_request:
        # edited: re-review a corrected title, body or base.
        types: [opened, synchronize, reopened, ready_for_review, edited]
-   # Optional: the shared workflow already cancels its own running jobs for the PR.
+   # Optional: the shared workflow also cancels its own previous review of the PR.
    concurrency:
      group: pr-review-${{ github.event.pull_request.number }}
      cancel-in-progress: true
@@ -204,7 +204,7 @@ Claude Code.
 | `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | for Claude | `--model` and `--effort` |
 | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | for Codex | `model` and `model_reasoning_effort` |
 | `CODEX_CLI_VERSION` | no | `@openai/codex` version, default `latest` |
-| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 12-minute review step |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review, capped by the 10-minute review step |
 
 A reviewer whose model or effort variable is empty fails with an error rather
 than falling back to a stale default. If that happens, give the repository
