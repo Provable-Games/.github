@@ -348,7 +348,21 @@ jobs:
           reply=$(sed -E '1{/^## .*Code Review/d}' /tmp/review.txt 2>/dev/null || true)
           reply="${reply#"${reply%%[![:space:]]*}"}"
           reply="${reply%"${reply##*[![:space:]]}"}"
-          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' <<< "$reply")
+          # A fence opens on 3+ backticks or tildes and closes only on a run of the same character,
+          # at least as long, with nothing after it (CommonMark), so a nested example can't end it early.
+          prose=$(awk '{
+              line = $0; sub(/^[[:space:]]+/, "", line)
+              if (match(line, /^(```+|~~~+)/)) {
+                run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
+                if (!open) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
+                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
+              }
+              if (!open) print
+            } END { if (open) print "UNCLOSED CODE FENCE" }' <<< "$reply")
+          if grep -qx 'UNCLOSED CODE FENCE' <<< "$prose"; then
+            echo "::error::Review has an unclosed code fence"
+            exit 1
+          fi
           # Severity comes from finding headings only, so a quoted [HIGH] cannot block.
           if grep -qE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
@@ -567,7 +581,21 @@ jobs:
           reply=$(sed -E '1{/^## .*Code Review/d}' /tmp/review.txt 2>/dev/null || true)
           reply="${reply#"${reply%%[![:space:]]*}"}"
           reply="${reply%"${reply##*[![:space:]]}"}"
-          prose=$(awk '/^[[:space:]]*(```|~~~)/ { f = !f; next } !f' <<< "$reply")
+          # A fence opens on 3+ backticks or tildes and closes only on a run of the same character,
+          # at least as long, with nothing after it (CommonMark), so a nested example can't end it early.
+          prose=$(awk '{
+              line = $0; sub(/^[[:space:]]+/, "", line)
+              if (match(line, /^(```+|~~~+)/)) {
+                run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
+                if (!open) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
+                if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
+              }
+              if (!open) print
+            } END { if (open) print "UNCLOSED CODE FENCE" }' <<< "$reply")
+          if grep -qx 'UNCLOSED CODE FENCE' <<< "$prose"; then
+            echo "::error::Review has an unclosed code fence"
+            exit 1
+          fi
           # Severity comes from finding headings only, so a quoted [HIGH] cannot block.
           if grep -qE '^[[:space:]]*### \[(CRITICAL|HIGH)\]' <<< "$prose"; then
             echo "::error::Review reported CRITICAL or HIGH severity findings"
