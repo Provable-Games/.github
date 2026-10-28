@@ -42,8 +42,10 @@ on:
       block_on_severity:
         description: >-
           Fail the review job when a reviewer reports a [CRITICAL] or [HIGH]
-          finding, turning review into a merge gate. Off by default: reviews
-          are advisory unless a repo opts in.
+          finding heading, turning review into a merge gate. The gate fails
+          closed: an empty, missing, unrecognized or `Review incomplete:`
+          reply also fails. Off by default: reviews are advisory unless a repo
+          opts in.
         type: boolean
         default: false
       setup_script:
