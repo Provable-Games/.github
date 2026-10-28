@@ -8,9 +8,9 @@ name: Code Review (reusable)
 #   - .github/prompts/*.md         — the review criteria each agent uses.
 # Everything generic (matrix build, prompt assembly, the codex sandbox
 # workaround, comment publishing, claude transcript extraction) lives here.
-# Reviewer settings are pinned here so org/repo variables cannot override them:
-#   Claude: claude-opus-5-5, medium (Claude Code CLI 2.1.281)
-#   Codex:  gpt-6-luna, max (@openai/codex 0.155.0)
+# Model and effort come from org Actions variables, and both CLIs install at
+# their latest release, so a model upgrade is one variable change for every
+# caller rather than an edit here.
 #
 # Usage from a caller repo (.github/workflows/pr-review.yml):
 #   jobs:
@@ -18,8 +18,11 @@ name: Code Review (reusable)
 #       uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
 #       secrets: inherit
 #
-# Remaining optional Org variable:
-#   CODEX_REVIEW_TIMEOUT_SECONDS
+# Org variables (Settings → Secrets and variables → Actions → Variables):
+#   CLAUDE_REVIEW_MODEL, CLAUDE_REVIEW_EFFORT  (required for Claude)
+#   CODEX_REVIEW_MODEL, CODEX_REVIEW_EFFORT    (required for Codex)
+#   CODEX_CLI_VERSION                          (optional, default latest)
+#   CODEX_REVIEW_TIMEOUT_SECONDS               (optional)
 
 on:
   workflow_call:
@@ -120,8 +123,8 @@ jobs:
     name: Claude - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     env:
-      CLAUDE_REVIEW_MODEL: claude-opus-5-5
-      CLAUDE_REVIEW_EFFORT: medium
+      CLAUDE_REVIEW_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL }}
+      CLAUDE_REVIEW_EFFORT: ${{ vars.CLAUDE_REVIEW_EFFORT }}
     permissions:
       contents: read
       issues: write
@@ -131,6 +134,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
     steps:
+      - name: Check review settings
+        run: |
+          if [ -z "$CLAUDE_REVIEW_MODEL" ] || [ -z "$CLAUDE_REVIEW_EFFORT" ]; then
+            echo "::error::Set the org Actions variables CLAUDE_REVIEW_MODEL and CLAUDE_REVIEW_EFFORT, and give this repository access to them."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -202,25 +212,14 @@ jobs:
             echo "${DELIM}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Set up Claude Code CLI
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install Claude Code CLI
-        id: claude-cli
-        run: |
-          npm install --global @anthropic-ai/claude-code@2.1.281
-          echo "path=$(command -v claude)" >> "$GITHUB_OUTPUT"
-
+      # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1.0.231
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.build-prompt.outputs.prompt }}
           claude_args: --model ${{ env.CLAUDE_REVIEW_MODEL }} --effort ${{ env.CLAUDE_REVIEW_EFFORT }}
-          path_to_claude_code_executable: ${{ steps.claude-cli.outputs.path }}
 
       - name: Extract Claude review output
         if: always()
@@ -303,9 +302,9 @@ jobs:
     name: Codex - ${{ matrix.agent_name }}
     runs-on: ubuntu-latest
     env:
-      CODEX_REVIEW_MODEL: gpt-6-luna
-      CODEX_REVIEW_EFFORT: max
-      CODEX_NPM_SPEC: "@openai/codex@0.155.0"
+      CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+      CODEX_REVIEW_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT }}
+      CODEX_NPM_SPEC: "@openai/codex@${{ vars.CODEX_CLI_VERSION || 'latest' }}"
     permissions:
       contents: read
       issues: write
@@ -314,6 +313,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
     steps:
+      - name: Check review settings
+        run: |
+          if [ -z "$CODEX_REVIEW_MODEL" ] || [ -z "$CODEX_REVIEW_EFFORT" ]; then
+            echo "::error::Set the org Actions variables CODEX_REVIEW_MODEL and CODEX_REVIEW_EFFORT, and give this repository access to them."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
