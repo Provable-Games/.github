@@ -9,4 +9,10 @@ on:
 jobs:
   review:
     uses: ./.github/workflows/code-review.yml
+    # A called workflow's job permissions can't exceed the caller's.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
     secrets: inherit
