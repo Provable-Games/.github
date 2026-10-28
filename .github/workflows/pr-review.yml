@@ -4,7 +4,7 @@ name: PR Review
 # workflow, so a change to code-review.yml is proven before v1 moves.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 jobs:
   review:

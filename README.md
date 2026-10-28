@@ -46,7 +46,8 @@ review config and prompts.
    name: PR Review
    on:
      pull_request:
-       types: [opened, synchronize, reopened, ready_for_review]
+       # edited: re-review a corrected title, body or base.
+       types: [opened, synchronize, reopened, ready_for_review, edited]
    jobs:
      review:
        uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
