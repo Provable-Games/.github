@@ -151,7 +151,12 @@ finding is:
 - **Fix:** the concrete change.
 ```
 
-`Do` says whether to fix it in this PR or in a follow-up issue or PR. A review
+A review with findings ends with `**Complexity:** Low|Medium|High — why`.
+`Do` says whether to fix it in this PR or in a follow-up issue or PR. Beyond
+the repository's own criteria, every review checks that tests cover edge and
+extreme cases, reports only significant simplifications, flags a PR
+description that doesn't match the diff, and for smart contracts looks for
+significant gas and CASM-size savings. A review
 that cannot run because review material is missing replies
 `Review incomplete: <reason>`. The full contract, with the severity,
 likelihood, effort and `Do` definitions, is
