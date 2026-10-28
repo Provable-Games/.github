@@ -6,8 +6,8 @@ name: Code Review (reusable)
 #   - .github/review-agents.json  — agents: which diff paths to review, the
 #                                    prompt file, and a display name.
 #   - .github/prompts/*.md         — the review criteria each agent uses.
-# Everything generic (matrix build, prompt assembly, the codex sandbox
-# workaround, comment publishing, claude transcript extraction) lives here.
+# Everything generic (matrix build, prompt assembly, comment publishing,
+# claude transcript extraction) lives here.
 # Model and effort come from org Actions variables, and both CLIs install at
 # their latest release, so a model upgrade is one variable change for every
 # caller rather than an edit here.
@@ -239,6 +239,8 @@ jobs:
       # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
+        # Below the job's 15 minutes, so a long review fails here and the comment still posts.
+        timeout-minutes: 12
         uses: anthropics/claude-code-action@v1
         with:
           # The job token instead of the Claude app's OIDC exchange, which skips the review on any PR
@@ -441,6 +443,7 @@ jobs:
 
       - name: Run Codex review
         id: codex-review
+        timeout-minutes: 12
         env:
           CODEX_REVIEW_TIMEOUT_SECONDS: ${{ vars.CODEX_REVIEW_TIMEOUT_SECONDS }}
         run: |

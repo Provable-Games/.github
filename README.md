@@ -34,8 +34,8 @@ Only needs the read-only default token, so no caller `permissions` block.
 
 [`.github/workflows/code-review.yml`](.github/workflows/code-review.yml) runs
 matrixed Claude + Codex reviews on pull requests. All generic logic lives here
-(matrix build, prompt assembly, the codex sandbox workaround, comment
-publishing, claude transcript extraction). Each repo supplies only its own
+(matrix build, prompt assembly, comment publishing, claude transcript
+extraction). Each repo supplies only its own
 review config and prompts.
 
 ### Adopt it in a repo
