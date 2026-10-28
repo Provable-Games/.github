@@ -81,7 +81,8 @@ review config and prompts.
    `echo "$dir" >> "$GITHUB_PATH"`.
 
    **`block_on_severity`** turns review into a merge gate: the review job
-   fails when a reviewer reports a `[CRITICAL]` or `[HIGH]` finding. Off by
+   fails when a reviewer reports a `### [CRITICAL]` or `### [HIGH]` finding
+   heading (outside fenced code; a quoted severity doesn't count). Off by
    default — reviews are advisory unless a repo opts in:
 
    Add a `with:` block to the caller job above:
