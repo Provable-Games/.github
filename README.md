@@ -162,10 +162,13 @@ likelihood, effort and `Do` definitions, is
 [`.github/prompts/review-instructions.md`](.github/prompts/review-instructions.md),
 which both reviewers get after the repository prompt.
 
-### Secrets (org-level, inherited)
+### Secrets (org-level)
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — for the Claude reviewer.
 - `CODEX_AUTH_DOT_JSON` — `~/.codex/auth.json` contents for the Codex reviewer.
+
+The caller passes these two by name, as in the example above, rather than
+`secrets: inherit`.
 
 Reviews are **skipped on fork PRs** (secrets aren't available to forks, so a
 review would just fail/post empty). Same-repo and same-org branch PRs run
