@@ -459,12 +459,13 @@ jobs:
           fi
           # No sandbox: slim's container lacks the user namespaces it needs, and the reviewer keeps
           # full tool and network access, like Claude.
+          # The prompt goes on stdin: one argument is capped at 128 KiB, which a large PR exceeds.
           "${TIMEOUT_CMD[@]}" npx -y "$CODEX_NPM_SPEC" exec \
             --sandbox danger-full-access \
             -c "model=\"$CODEX_REVIEW_MODEL\"" \
             -c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"" \
             -o /tmp/review.txt \
-            -- "$(cat /tmp/prompt.txt)" > /tmp/review-run.log 2>&1
+            - < /tmp/prompt.txt > /tmp/review-run.log 2>&1
           EXIT_CODE=$?
           set -e
           if [ "$EXIT_CODE" = "124" ] && [ -n "${CODEX_REVIEW_TIMEOUT_SECONDS:-}" ]; then
