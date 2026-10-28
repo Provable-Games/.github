@@ -48,6 +48,10 @@ review config and prompts.
      pull_request:
        # edited: re-review a corrected title, body or base.
        types: [opened, synchronize, reopened, ready_for_review, edited]
+   # One review per PR at a time: a push or an edit cancels the run in progress.
+   concurrency:
+     group: pr-review-${{ github.event.pull_request.number }}
+     cancel-in-progress: true
    jobs:
      review:
        uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
