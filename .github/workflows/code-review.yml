@@ -354,7 +354,8 @@ jobs:
               line = $0; sub(/^[[:space:]]+/, "", line)
               if (match(line, /^(```+|~~~+)/)) {
                 run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
-                if (!open) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
+                # The info string of a backtick opener may not contain a backtick: that line is inline code.
+                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
                 if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
               }
               if (!open) print
@@ -587,7 +588,8 @@ jobs:
               line = $0; sub(/^[[:space:]]+/, "", line)
               if (match(line, /^(```+|~~~+)/)) {
                 run = substr(line, 1, RLENGTH); rest = substr(line, RLENGTH + 1)
-                if (!open) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
+                # The info string of a backtick opener may not contain a backtick: that line is inline code.
+                if (!open && !(substr(run, 1, 1) == "`" && index(rest, "`"))) { open = 1; ch = substr(run, 1, 1); len = length(run); next }
                 if (substr(run, 1, 1) == ch && length(run) >= len && rest ~ /^[[:space:]]*$/) { open = 0; next }
               }
               if (!open) print

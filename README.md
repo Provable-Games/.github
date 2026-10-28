@@ -94,8 +94,11 @@ review config and prompts.
 
    The review comment is posted either way, so a blocking finding is always
    visible before the job goes red. The gate fails closed: a reply of
-   `Review incomplete: <reason>`, an empty or missing reply, or one that is
-   neither exactly `lgtm` nor findings also fails the job. Advisory callers
+   `Review incomplete: <reason>`, an empty or missing reply, a reply with an
+   unclosed code fence, or one that is neither exactly `lgtm` nor findings also
+   fails the job. Code fences are matched as in CommonMark: a fence closes only
+   on the same character, at least as long, and a backtick line with more
+   backticks after the run is inline code, not a fence. Advisory callers
    (without `block_on_severity`) are unaffected.
 
 2. Add `.github/review-agents.json` describing what to review:
