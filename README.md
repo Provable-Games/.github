@@ -128,24 +128,21 @@ normally.
 
 ### Reviewer models and effort
 
-The shared workflow pins these settings so organization and repository Actions
-variables cannot change the requested reviewer model or effort:
+Model and effort come from org Actions variables, and both CLIs install at
+their latest release, so upgrading every caller's reviewers is one variable
+change. The Claude Code Action's moving `v1` tag installs its own current
+Claude Code.
 
-| Reviewer | Model | Effort | CLI |
-|---|---|---|---|
-| Claude | `claude-opus-5-5` | `medium` | `@anthropic-ai/claude-code@2.1.281` |
-| Codex | `gpt-6-luna` | `max` | `@openai/codex@0.155.0` |
-
-Claude CLI 2.1.281 supports Opus 5.5; the reusable workflow passes this pinned
-binary to the Claude Code Action.
-
-### Optional Actions variables
-
-| Variable | Default | Purpose |
+| Variable | Required | Purpose |
 |---|---|---|
-| `CODEX_REVIEW_TIMEOUT_SECONDS` | unset | Optional timeout for each Codex review |
+| `CLAUDE_REVIEW_MODEL`, `CLAUDE_REVIEW_EFFORT` | for Claude | `--model` and `--effort` |
+| `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT` | for Codex | `model` and `model_reasoning_effort` |
+| `CODEX_CLI_VERSION` | no | `@openai/codex` version, default `latest` |
+| `CODEX_REVIEW_TIMEOUT_SECONDS` | no | Timeout for each Codex review |
 
-Model and effort changes are made in this shared workflow and its documentation.
+A reviewer whose model or effort variable is empty fails with an error rather
+than falling back to a stale default. If that happens, give the repository
+access to the org variables.
 
 ### Versioning
 
