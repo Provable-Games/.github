@@ -164,11 +164,21 @@ jobs:
         # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
         # in this repository's self-test), so the instructions always match it.
         env:
+          GH_TOKEN: ${{ github.token }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/review-instructions.md" \
-            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository or job.workflow_sha is empty; cannot fetch the review instructions."
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$WORKFLOW_REPOSITORY/contents/.github/prompts/review-instructions.md?ref=$WORKFLOW_SHA" \
+              > "$RUNNER_TEMP/review-instructions.md" && [ -s "$RUNNER_TEMP/review-instructions.md" ] && break
+            [ "$attempt" -lt 3 ] || { echo "::error::Could not fetch the review instructions."; exit 1; }
+            sleep 5
+          done
 
       - name: Set up review tools
         if: inputs.setup_script != ''
@@ -369,11 +379,21 @@ jobs:
         # job.workflow_* name this reusable workflow's own revision (v1, a SHA pin, or a PR head
         # in this repository's self-test), so the instructions always match it.
         env:
+          GH_TOKEN: ${{ github.token }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/review-instructions.md" \
-            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/.github/prompts/review-instructions.md"
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository or job.workflow_sha is empty; cannot fetch the review instructions."
+            exit 1
+          fi
+          for attempt in 1 2 3; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$WORKFLOW_REPOSITORY/contents/.github/prompts/review-instructions.md?ref=$WORKFLOW_SHA" \
+              > "$RUNNER_TEMP/review-instructions.md" && [ -s "$RUNNER_TEMP/review-instructions.md" ] && break
+            [ "$attempt" -lt 3 ] || { echo "::error::Could not fetch the review instructions."; exit 1; }
+            sleep 5
+          done
 
       - name: Set up review tools
         if: inputs.setup_script != ''
