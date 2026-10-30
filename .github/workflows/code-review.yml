@@ -438,7 +438,7 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup leaves the review most of slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -497,7 +497,6 @@ jobs:
 
       - name: Run Codex review
         id: codex-review
-        timeout-minutes: 10
         env:
           CODEX_REVIEW_TIMEOUT_SECONDS: ${{ vars.CODEX_REVIEW_TIMEOUT_SECONDS }}
         run: |
