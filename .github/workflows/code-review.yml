@@ -193,7 +193,7 @@ jobs:
 
       - name: Set up review tools
         if: inputs.setup_script != ''
-        # Two minutes, so setup plus the 10-minute review fits slim's 15-minute job cap.
+        # Two minutes, so setup leaves the review most of slim's 15-minute job cap.
         timeout-minutes: 2
         env:
           SETUP_SCRIPT: ${{ inputs.setup_script }}
@@ -255,8 +255,6 @@ jobs:
       # The moving v1 tag picks up action releases, and each release installs its own Claude Code.
       - name: Run Claude Code Review
         id: claude-review
-        # 10 of the job's 15 minutes, leaving room for checkout, setup, fetch and the comment.
-        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         with:
           # The job token instead of the Claude app's OIDC exchange, which skips the review on any PR
