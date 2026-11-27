@@ -449,6 +449,20 @@ jobs:
           mkdir -p ~/.codex
           printf '%s' "$CODEX_AUTH_DOT_JSON" > ~/.codex/auth.json
           chmod 600 ~/.codex/auth.json
+          # Report the session's age, never its values. CI can't save a refreshed token back to
+          # the secret, and a refresh token works once: after the access token expires, the first
+          # run refreshes it and every later run fails until the secret is replaced.
+          exp=$(jq -r '.tokens.access_token // "" | split(".")[1] // ""' ~/.codex/auth.json 2>/dev/null \
+            | tr '_-' '/+' | awk '{ while (length($0) % 4) $0 = $0 "="; print }' \
+            | base64 -d 2>/dev/null | jq -r '.exp // empty' 2>/dev/null || true)
+          refreshed=$(jq -r '.last_refresh // "unknown"' ~/.codex/auth.json 2>/dev/null || echo unknown)
+          if [ -z "$exp" ]; then
+            echo "::warning title=Codex session::CODEX_AUTH_DOT_JSON has no readable access token; replace the secret with a fresh auth.json."
+          elif [ "$exp" -le "$(date +%s)" ]; then
+            echo "::warning title=Codex session expired::The access token in CODEX_AUTH_DOT_JSON expired $(date -u -d "@$exp" +%FT%TZ) (last refresh $refreshed). This run will try its single-use refresh token; once one run has used it, every later run fails until the secret is replaced."
+          elif [ "$exp" -le "$(( $(date +%s) + 3*86400 ))" ]; then
+            echo "::warning title=Codex session expires soon::The access token in CODEX_AUTH_DOT_JSON expires $(date -u -d "@$exp" +%FT%TZ). Replace the secret before then."
+          fi
 
       - name: Build review prompt
         env:
@@ -521,9 +535,37 @@ jobs:
           if [ -s /tmp/review-run.log ]; then
             echo ""
             echo "Codex CLI log captured at /tmp/review-run.log."
-            echo "Not printing the log because it can contain the review prompt."
+            echo "Not printing the whole log because it can contain the review prompt."
+          fi
+          REASON=""
+          if [ "$EXIT_CODE" != "0" ] && [ -s /tmp/review-run.log ]; then
+            # Only Codex's own error lines: they never contain the prompt. Tokens are redacted.
+            ERRORS=$(grep -E '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z +ERROR |ERROR: )' /tmp/review-run.log \
+              | sed -E -e 's/^[0-9TZ:.-]+ +//' \
+                       -e 's/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/<redacted>/g' \
+                       -e 's/(sk-|rt_|eyJ)[A-Za-z0-9_-]{16,}/<redacted>/g' \
+              | awk '!seen[$0]++' | tail -n 15 || true)
+            if grep -qiE 'refresh token was already used|could not be refreshed|authentication token is expired|401 Unauthorized' /tmp/review-run.log; then
+              REASON="Codex authentication failed: the ChatGPT session in the CODEX_AUTH_DOT_JSON secret has expired and its single-use refresh token was already used. Replace the secret with a fresh auth.json (CODEX_HOME=~/.codex-ci codex login, then gh secret set CODEX_AUTH_DOT_JSON < ~/.codex-ci/auth.json) and re-run."
+            elif grep -qiE 'rate limit|usage limit|429' /tmp/review-run.log; then
+              REASON="Codex hit a rate or usage limit. Re-run later."
+            elif [ -n "$ERRORS" ]; then
+              REASON="Codex failed: $(printf '%s\n' "$ERRORS" | tail -n 1 | cut -c1-300)"
+            else
+              REASON="Codex exited $EXIT_CODE without an error line; see the job log."
+            fi
+            echo "::error title=Codex review failed::$REASON"
+            if [ -n "$ERRORS" ]; then
+              echo "Codex error lines (deduplicated, tokens redacted):"
+              printf '%s\n' "$ERRORS"
+            fi
           fi
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          {
+            echo "reason<<CODEX_REASON_EOF"
+            echo "$REASON"
+            echo "CODEX_REASON_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Post review comment
         if: ${{ !cancelled() && steps.codex-review.outcome != 'skipped' }}
@@ -535,6 +577,7 @@ jobs:
           REVIEW_MODEL: ${{ env.CODEX_REVIEW_MODEL }}
           REVIEW_EFFORT: ${{ env.CODEX_REVIEW_EFFORT }}
           EXIT_CODE: ${{ steps.codex-review.outputs.exit_code }}
+          FAIL_REASON: ${{ steps.codex-review.outputs.reason }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           COMMENT_HEADER="${REVIEW_MODEL}-${REVIEW_EFFORT} Code Review: [${HEAD_SHA:0:7}](${GITHUB_SERVER_URL}/${REPO}/commit/${HEAD_SHA})"
@@ -553,7 +596,11 @@ jobs:
               DISPLAY_EXIT_CODE="${EXIT_CODE:-unknown}"
               echo "**Review execution failed** (exit code $DISPLAY_EXIT_CODE)."
               echo ""
-              echo "The Codex CLI log was not posted because it can contain the full review prompt."
+              if [ -n "${FAIL_REASON:-}" ]; then
+                echo "$FAIL_REASON"
+                echo ""
+              fi
+              echo "The full Codex CLI log was not posted because it can contain the review prompt."
               echo "See the workflow run for job status: $RUN_URL"
             elif [ -s "$REVIEW_BODY_FILE" ]; then
               cat "$REVIEW_BODY_FILE"
